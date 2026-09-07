@@ -1,0 +1,31 @@
+version: 2
+
+models:
+  - name: bronze_project_monitoring
+    tags: [bronze, project_monitoring]
+    description: "Typed, partitioned promotion of GX-validated staging data."
+    columns:
+      - name: project_id
+        tests: [not_null, unique]
+
+  - name: stg_project_monitoring
+    tags: [silver, project_monitoring]
+    description: "Denormalized, deduped, conformed project monitoring table."
+    columns:
+      - name: project_id
+        tests: [not_null, unique]
+      - name: budget_utilization_pct
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100
+
+  - name: mart_rd_portfolio_performance
+    tags: [gold, project_monitoring]
+    description: "Budget allocation/utilization by agency, program, region, quarter."
+    columns:
+      - name: utilization_rate_pct
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100

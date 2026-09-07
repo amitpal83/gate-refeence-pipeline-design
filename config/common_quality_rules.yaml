@@ -1,0 +1,21 @@
+# common_quality_rules.yaml
+# Declarative config consumed by gx_common_suite.py — the same four rule
+# categories apply to every GATES dataset; only schema_*.yaml changes.
+rule_categories:
+  - name: null_check
+    applies_to: "fields where required: true"
+    ge_expectation: expect_column_values_to_not_be_null
+  - name: duplicate_check
+    applies_to: "fields listed in schema.unique_fields"
+    ge_expectation: expect_column_values_to_be_unique
+  - name: schema_validation
+    applies_to: "full column set"
+    ge_expectation: [expect_table_columns_to_match_set, expect_column_values_to_be_of_type]
+  - name: permissible_values
+    applies_to: "fields with a permissible_values list"
+    ge_expectation: expect_column_values_to_be_in_set
+on_failure:
+  hard_rules: [null_check, duplicate_check, schema_validation]
+  hard_rule_action: quarantine
+  soft_rules: [permissible_values]
+  soft_rule_action: flag_and_promote

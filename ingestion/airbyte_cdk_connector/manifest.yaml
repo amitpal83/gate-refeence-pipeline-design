@@ -1,0 +1,115 @@
+# manifest.yaml — real Airbyte low-code CDK manifest, meant to be loaded by
+# airbyte_cdk.sources.declarative.yaml_declarative_source.YamlDeclarativeSource
+# (see main.py). This differs from config/airbyte_manifest.yaml one level up
+# in the repo — that file is a simplified reference our own hand-rolled
+# ingest_api_airbyte.py reads with plain yaml.safe_load(); THIS file adds the
+# top-level `type:`/`spec:` keys and per-component `type:` fields the real
+# low-code CDK schema actually requires, which the simplified version omits.
+#
+# NOT VERIFIED: written from the documented low-code CDK manifest shape, not
+# executed against a real airbyte-cdk install (no network access when this
+# was authored). Validate with `python main.py spec` before relying on it.
+
+version: "0.79.0"
+type: DeclarativeSource
+
+check:
+  type: CheckStream
+  stream_names:
+    - project_monitoring
+
+definitions:
+  selector:
+    type: RecordSelector
+    extractor:
+      type: DpathExtractor
+      field_path: ["data"]
+
+  requester:
+    type: HttpRequester
+    url_base: "{{ config['base_url'] }}"
+    path: "/projects/monitoring"
+    http_method: GET
+    authenticator:
+      type: BearerAuthenticator
+      api_token: "{{ config['api_token'] }}"
+
+  paginator:
+    type: DefaultPaginator
+    pagination_strategy:
+      type: PageIncrement
+      page_size: 200
+    page_token_option:
+      type: RequestOption
+      inject_into: request_parameter
+      field_name: page
+
+  retriever:
+    type: SimpleRetriever
+    record_selector:
+      $ref: "#/definitions/selector"
+    requester:
+      $ref: "#/definitions/requester"
+    paginator:
+      $ref: "#/definitions/paginator"
+
+  project_monitoring_stream:
+    type: DeclarativeStream
+    name: project_monitoring
+    primary_key: "project_id"
+    retriever:
+      $ref: "#/definitions/retriever"
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        "$schema": "http://json-schema.org/draft-07/schema#"
+        type: object
+        properties:
+          project_id: { type: string }
+          agency: { type: string }
+          region: { type: string }
+          program_area: { type: string }
+          project_title: { type: string }
+          principal_investigator: { type: string }
+          start_date: { type: string, format: date }
+          end_date: { type: ["string", "null"], format: date }
+          budget_allocated_php: { type: number }
+          budget_utilized_php: { type: number }
+          status: { type: string }
+          funding_source: { type: string }
+          last_updated_at: { type: string, format: date-time }
+        required:
+          - project_id
+          - agency
+          - region
+          - program_area
+          - start_date
+          - budget_allocated_php
+          - budget_utilized_php
+          - status
+          - funding_source
+
+streams:
+  - "#/definitions/project_monitoring_stream"
+
+spec:
+  type: Spec
+  connection_specification:
+    "$schema": "http://json-schema.org/draft-07/schema#"
+    type: object
+    required:
+      - api_token
+      - base_url
+    properties:
+      api_token:
+        type: string
+        title: API Token
+        description: "Bearer token for the DOST PMS API (or the mock server — any non-empty string works there)."
+        airbyte_secret: true
+        order: 0
+      base_url:
+        type: string
+        title: Base URL
+        description: "e.g. https://pms.dost.gov.ph/api/v1 in production, or http://127.0.0.1:8899 against the local mock server."
+        default: "https://pms.dost.gov.ph/api/v1"
+        order: 1

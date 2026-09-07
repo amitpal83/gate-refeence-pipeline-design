@@ -1,0 +1,37 @@
+{{
+  config(
+    materialized='table',
+    tags=['bronze', 'project_monitoring'],
+    partition_by={'field': 'dt', 'data_type': 'date'}
+  )
+}}
+
+-- Bronze: typed, partitioned promotion of GX-validated staging data.
+-- Only rows that passed the GX common + custom suites reach this model —
+-- Airflow's trigger_gx_validation task fails the run before dbt_run_bronze
+-- is ever called if the batch has a hard-rule violation.
+with validated_staging as (
+
+    select *
+    from {{ source('staging', 'project_monitoring_raw') }}
+    where _gx_validation_status = 'pass'
+
+)
+
+select
+    cast(project_id as varchar) as project_id,
+    cast(agency as varchar) as agency,
+    cast(region as varchar) as region,
+    cast(program_area as varchar) as program_area,
+    cast(project_title as varchar) as project_title,
+    cast(principal_investigator as varchar) as principal_investigator,
+    cast(start_date as date) as start_date,
+    cast(end_date as date) as end_date,
+    cast(budget_allocated_php as decimal(18,2)) as budget_allocated_php,
+    cast(budget_utilized_php as decimal(18,2)) as budget_utilized_php,
+    cast(status as varchar) as status,
+    cast(funding_source as varchar) as funding_source,
+    cast(last_updated_at as timestamp) as last_updated_at,
+    current_date as dt,
+    '{{ invocation_id }}' as dbt_run_id
+from validated_staging

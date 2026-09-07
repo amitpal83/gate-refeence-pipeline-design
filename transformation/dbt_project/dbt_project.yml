@@ -1,0 +1,21 @@
+name: 'gates_project_monitoring'
+version: '1.0.0'
+config-version: 2
+
+profile: 'gates'
+
+model-paths: ["models"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+models:
+  gates_project_monitoring:
+    bronze:
+      +materialized: table
+      +tags: ['bronze']
+    silver:
+      +materialized: table
+      +tags: ['silver']
+    gold:
+      +materialized: table
+      +tags: ['gold']

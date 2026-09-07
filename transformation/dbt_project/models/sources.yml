@@ -1,0 +1,19 @@
+version: 2
+
+sources:
+  - name: staging
+    description: >
+      Raw, GX-validated staging tables read by each dataset's Bronze model.
+      Each table here must actually exist and be queryable in Trino/Iceberg
+      before dbt can reference it — see
+      ../setup/create_staging_external_table.sql for the one-time DDL that
+      creates it (not run by the pipeline itself; a setup step).
+    tables:
+      - name: project_monitoring_raw
+        description: "Union of the API and file channel staging output, tagged with _gx_validation_status."
+
+      # A second dataset registered in orchestration/dataset_registry.yaml
+      # needs its own table entry here too, matching its own staging path
+      # and its own setup DDL:
+      # - name: rd_equipment_inventory_raw
+      #   description: "..."

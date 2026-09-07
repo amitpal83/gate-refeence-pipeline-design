@@ -1,0 +1,15 @@
+# profiles.yml — Production/target profile: point dbt at
+# Trino-on-Iceberg. Swap the `type` block for dbt-spark if Spark SQL is the
+# execution engine instead of Trino; no model SQL changes needed either way.
+gates:
+  target: prod
+  outputs:
+    prod:
+      type: trino
+      method: none
+      host: trino.gates.internal
+      port: 8080
+      user: gates_svc_dbt
+      catalog: iceberg
+      schema: project_mgmt
+      threads: 4

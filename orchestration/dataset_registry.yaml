@@ -1,0 +1,30 @@
+# dataset_registry.yaml
+# One entry per dataset served by the project_monitoring_dag.py factory.
+# Adding a new dataset to this pipeline framework = adding a block here,
+# NOT editing airflow_dag.py. Every key here is a parameter to build_dag().
+datasets:
+  - dataset: project_monitoring
+    start_date: "2026-01-01"
+    schedule_interval: "@daily"
+    api_source_id: dost_pms_api
+    file_source_id: pchrd_regional_file_dropbox
+    airbyte_connection_var: project_monitoring_airbyte_connection_id
+    agency: PCHRD
+    # dbt layer chain, in run order. Each name here must match a real
+    # `tags=[...]` value on that dataset's dbt models (see
+    # transformation/dbt_project/models/*/*.sql). Not every dataset needs
+    # all three — a dataset with no meaningful Silver transformation could
+    # declare dbt_layers: [bronze, gold] instead, with no code changes.
+    dbt_layers: [bronze, silver, gold]
+
+  # Example second dataset — uncomment and fill in once a second dataset's
+  # Schema Reference Config Repo (schema_<dataset>.yaml, column_aliasing.yaml)
+  # exists:
+  # - dataset: rd_equipment_inventory
+  #   start_date: "2026-03-01"
+  #   schedule_interval: "@weekly"
+  #   api_source_id: some_other_api
+  #   file_source_id: some_other_file_dropbox
+  #   airbyte_connection_var: rd_equipment_inventory_airbyte_connection_id
+  #   agency: PCAARRD
+  #   dbt_layers: [bronze, silver, gold]

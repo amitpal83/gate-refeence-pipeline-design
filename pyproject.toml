@@ -1,0 +1,24 @@
+[project]
+name = "gates-project-monitoring-pipeline"
+version = "1.0.0"
+description = "GATES Project Monitoring pipeline — reference implementation (LLD)"
+requires-python = ">=3.13"
+dependencies = [
+    "pandas",
+    "pyyaml",
+    "requests",
+]
+
+# Optional platform dependencies used by the deployed reference implementation:
+[project.optional-dependencies]
+production = [
+    "great-expectations",
+    "confluent-kafka",
+    "dbt-core",
+    "dbt-trino",       # or dbt-spark, depending on the execution engine
+    "datahub",
+    "apache-airflow",
+]
+
+[tool.setuptools]
+py-modules = []

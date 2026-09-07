@@ -1,0 +1,6 @@
+# Pin range is a best guess based on the low-code CDK features this manifest
+# uses (DpathExtractor, SimpleRetriever, DefaultPaginator with PageIncrement,
+# InlineSchemaLoader with inline `schema:`). NOT VERIFIED against a real
+# install — if `pip install` resolves a version outside this range and
+# `python main.py spec` fails, widen it and retry.
+airbyte-cdk>=0.90,<2.0
