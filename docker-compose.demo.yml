@@ -361,6 +361,37 @@ services:
       SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: kafka:29092
       SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
 
+  datahub-system-update:
+    # One-time bootstrap job DataHub's own quickstart always runs before GMS
+    # starts — creates/migrates the ~20 Elasticsearch indices GMS's search
+    # DAO expects (datahubpolicyindex_v2, datasetindex_v2, etc.). Without
+    # it, GMS starts but every search-backed request 404s with
+    # "index_not_found_exception" and it never reports healthy.
+    image: acryldata/datahub-upgrade:v0.14.1
+    mem_limit: 1g
+    command: ["-u", "SystemUpdate"]
+    depends_on:
+      datahub-mysql:
+        condition: service_healthy
+      datahub-elasticsearch:
+        condition: service_started
+      kafka:
+        condition: service_started
+      schema-registry:
+        condition: service_started
+    environment:
+      EBEAN_DATASOURCE_USERNAME: datahub
+      EBEAN_DATASOURCE_PASSWORD: ${DATAHUB_MYSQL_PASSWORD:?Set DATAHUB_MYSQL_PASSWORD in .env}
+      EBEAN_DATASOURCE_HOST: datahub-mysql:3306
+      EBEAN_DATASOURCE_URL: jdbc:mysql://datahub-mysql:3306/datahub?useUnicode=true&characterEncoding=utf8&useSSL=false&allowPublicKeyRetrieval=true
+      ELASTICSEARCH_HOST: datahub-elasticsearch
+      ELASTICSEARCH_PORT: 9200
+      KAFKA_BOOTSTRAP_SERVER: kafka:29092
+      KAFKA_SCHEMAREGISTRY_URL: http://schema-registry:8081
+      GRAPH_SERVICE_IMPL: elasticsearch
+      ENTITY_REGISTRY_CONFIG_PATH: /datahub/datahub-gms/resources/entity-registry.yml
+    restart: "no"
+
   datahub-gms:
     image: acryldata/datahub-gms:v0.14.1
     mem_limit: 2g
@@ -373,6 +404,8 @@ services:
         condition: service_started
       schema-registry:
         condition: service_started
+      datahub-system-update:
+        condition: service_completed_successfully
     environment:
       DATAHUB_SERVER_TYPE: quickstart
       DATAHUB_GMS_PORT: 8080
