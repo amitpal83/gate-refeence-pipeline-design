@@ -361,6 +361,25 @@ services:
       SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: kafka:29092
       SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
 
+  mysql-setup:
+    # v0.14.1 creates its MySQL schema (metadata_aspect_v2 and friends) via
+    # this SEPARATE dedicated image — datahub-upgrade's SystemUpdate command
+    # does NOT create it (that assumption, and a DATAHUB_SQL_SETUP_ENABLED
+    # flag, both come from a much newer DataHub release's quickstart recipe
+    # and don't apply to v0.14.1).
+    image: acryldata/datahub-mysql-setup:v0.14.1
+    mem_limit: 256m
+    depends_on:
+      datahub-mysql:
+        condition: service_healthy
+    environment:
+      MYSQL_HOST: datahub-mysql
+      MYSQL_PORT: "3306"
+      MYSQL_USERNAME: datahub
+      MYSQL_PASSWORD: ${DATAHUB_MYSQL_PASSWORD:?Set DATAHUB_MYSQL_PASSWORD in .env}
+      DATAHUB_DB_NAME: datahub
+    restart: "no"
+
   datahub-system-update:
     # One-time bootstrap job DataHub's own quickstart always runs before GMS
     # starts — creates/migrates the ~20 Elasticsearch indices GMS's search
@@ -371,8 +390,8 @@ services:
     mem_limit: 1g
     command: ["-u", "SystemUpdate"]
     depends_on:
-      datahub-mysql:
-        condition: service_healthy
+      mysql-setup:
+        condition: service_completed_successfully
       datahub-elasticsearch:
         condition: service_started
       kafka:
@@ -380,14 +399,8 @@ services:
       schema-registry:
         condition: service_started
     environment:
-      # This job also has to CREATE the MySQL schema (metadata_aspect_v2
-      # and friends) from scratch on first run — DATAHUB_SQL_SETUP_ENABLED
-      # is what tells it to do so (matches DataHub's own quickstart
-      # recipe), and it needs root, not the scoped "datahub" app user, to
-      # run that DDL.
-      DATAHUB_SQL_SETUP_ENABLED: "true"
-      EBEAN_DATASOURCE_USERNAME: root
-      EBEAN_DATASOURCE_PASSWORD: ${DATAHUB_MYSQL_ROOT_PASSWORD:?Set DATAHUB_MYSQL_ROOT_PASSWORD in .env}
+      EBEAN_DATASOURCE_USERNAME: datahub
+      EBEAN_DATASOURCE_PASSWORD: ${DATAHUB_MYSQL_PASSWORD:?Set DATAHUB_MYSQL_PASSWORD in .env}
       EBEAN_DATASOURCE_HOST: datahub-mysql:3306
       EBEAN_DATASOURCE_URL: jdbc:mysql://datahub-mysql:3306/datahub?useUnicode=true&characterEncoding=utf8&useSSL=false&allowPublicKeyRetrieval=true
       ELASTICSEARCH_HOST: datahub-elasticsearch
