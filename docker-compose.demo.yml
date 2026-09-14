@@ -35,7 +35,11 @@ services:
       retries: 20
 
   zookeeper:
-    image: bitnami/zookeeper:3.9
+    # bitnami/* versioned tags were moved to bitnamilegacy/* on Docker Hub
+    # (Bitnami's free-tier images are now unversioned "latest" only) —
+    # bitnamilegacy is the same image content, just the pre-move registry
+    # path, and is still free to pull.
+    image: bitnamilegacy/zookeeper:3.9
     mem_limit: 256m
     environment:
       ALLOW_ANONYMOUS_LOGIN: "yes"
@@ -43,7 +47,7 @@ services:
       - ${GATES_DATA_ROOT:-.local-data}/zookeeper:/bitnami
 
   kafka:
-    image: bitnami/kafka:3.7
+    image: bitnamilegacy/kafka:3.7
     mem_limit: 1g
     depends_on:
       zookeeper:
@@ -80,7 +84,7 @@ services:
       - ./sample_data/project_monitoring_api.json:/app/project_monitoring_api.json:ro
 
   kafka-init:
-    image: bitnami/kafka:3.7
+    image: bitnamilegacy/kafka:3.7
     mem_limit: 128m
     depends_on:
       kafka:
