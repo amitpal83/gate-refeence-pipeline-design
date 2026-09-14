@@ -1,0 +1,346 @@
+name: gates-demo
+
+services:
+  postgres:
+    image: postgres:16
+    mem_limit: 512m
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-gates}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-gates}
+    volumes:
+      - ${GATES_DATA_ROOT:-.local-data}/postgres:/var/lib/postgresql/data
+      - ./database:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  datahub-mysql:
+    image: mysql:8.0
+    mem_limit: 768m
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_bin
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DATAHUB_MYSQL_ROOT_PASSWORD:?Set DATAHUB_MYSQL_ROOT_PASSWORD in .env}
+      MYSQL_DATABASE: datahub
+      MYSQL_USER: datahub
+      MYSQL_PASSWORD: ${DATAHUB_MYSQL_PASSWORD:?Set DATAHUB_MYSQL_PASSWORD in .env}
+    volumes:
+      - ${GATES_DATA_ROOT:-.local-data}/datahub-mysql:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u root -p$${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  zookeeper:
+    image: bitnami/zookeeper:3.9
+    mem_limit: 256m
+    environment:
+      ALLOW_ANONYMOUS_LOGIN: "yes"
+    volumes:
+      - ${GATES_DATA_ROOT:-.local-data}/zookeeper:/bitnami
+
+  kafka:
+    image: bitnami/kafka:3.7
+    mem_limit: 1g
+    depends_on:
+      zookeeper:
+        condition: service_started
+    ports:
+      - "127.0.0.1:9092:9092"
+    environment:
+      KAFKA_CFG_NODE_ID: 1
+      KAFKA_CFG_BROKER_ID: 1
+      KAFKA_CFG_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,LOCAL:PLAINTEXT
+      KAFKA_CFG_LISTENERS: INTERNAL://:29092,LOCAL://:9092
+      KAFKA_CFG_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,LOCAL://localhost:9092
+      KAFKA_CFG_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE: "false"
+      ALLOW_PLAINTEXT_LISTENER: "yes"
+    volumes:
+      - ${GATES_DATA_ROOT:-.local-data}/kafka:/bitnami
+
+  mock-api:
+    # Stands in for the real DOST PMS API so both ingest_api_airbyte.py's
+    # hand-rolled reader and the real Airbyte CDK connector
+    # (ingestion/airbyte_cdk_connector) have something reachable to hit in
+    # the demo. Point ingestion/airbyte_cdk_connector/secrets/config.json's
+    # base_url at http://mock-api:8899 to exercise the real CDK connector —
+    # see deployment/README.md.
+    build:
+      context: ./deployment/mock-api
+    image: gates-demo-mock-api:local
+    mem_limit: 128m
+    ports:
+      - "127.0.0.1:8899:8899"
+    volumes:
+      - ./sample_data/project_monitoring_api.json:/app/project_monitoring_api.json:ro
+
+  kafka-init:
+    image: bitnami/kafka:3.7
+    mem_limit: 128m
+    depends_on:
+      kafka:
+        condition: service_started
+    entrypoint: ["/bin/bash", "-ec"]
+    command: |
+      /opt/bitnami/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists --topic gates.ingestion.project_monitoring --partitions 3 --replication-factor 1
+      /opt/bitnami/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists --topic gates.ingestion.rd_equipment_inventory --partitions 3 --replication-factor 1
+      /opt/bitnami/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists --topic cdc.project_schema.projects --partitions 3 --replication-factor 1
+    restart: "no"
+
+  source-db:
+    # The operational system CDC actually reads from — separate from the
+    # `postgres` service above, which only backs Airflow + the GATES config
+    # database. wal_level=logical is required for Debezium's pgoutput
+    # plugin to stream row-level changes.
+    image: postgres:16
+    mem_limit: 512m
+    command: ["postgres", "-c", "wal_level=logical", "-c", "max_wal_senders=4", "-c", "max_replication_slots=4"]
+    environment:
+      POSTGRES_USER: ${SOURCE_DB_USER:-gates_source}
+      POSTGRES_PASSWORD: ${SOURCE_DB_PASSWORD:?Set SOURCE_DB_PASSWORD in .env}
+      POSTGRES_DB: ${SOURCE_DB_NAME:-gates_source}
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - ${GATES_DATA_ROOT:-.local-data}/source-db:/var/lib/postgresql/data
+      - ./database/seed_source_db.sql:/docker-entrypoint-initdb.d/seed_source_db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  kafka-connect:
+    image: debezium/connect:2.7
+    mem_limit: 1g
+    depends_on:
+      kafka:
+        condition: service_started
+      source-db:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8083:8083"
+    environment:
+      BOOTSTRAP_SERVERS: kafka:29092
+      GROUP_ID: gates-connect
+      CONFIG_STORAGE_TOPIC: gates_connect_configs
+      OFFSET_STORAGE_TOPIC: gates_connect_offsets
+      STATUS_STORAGE_TOPIC: gates_connect_status
+
+  kafka-connect-init:
+    image: curlimages/curl:8.9.1
+    mem_limit: 64m
+    depends_on:
+      kafka-connect:
+        condition: service_started
+    volumes:
+      - ./deployment/kafka-connect:/connectors:ro
+    environment:
+      SOURCE_DB_USER: ${SOURCE_DB_USER:-gates_source}
+      SOURCE_DB_PASSWORD: ${SOURCE_DB_PASSWORD:?Set SOURCE_DB_PASSWORD in .env}
+      SOURCE_DB_NAME: ${SOURCE_DB_NAME:-gates_source}
+    entrypoint: ["/bin/sh", "-ec"]
+    command: |
+      until curl -sf http://kafka-connect:8083/connectors; do sleep 3; done
+      sed -e "s/__SOURCE_DB_USER__/$${SOURCE_DB_USER}/" \
+          -e "s/__SOURCE_DB_PASSWORD__/$${SOURCE_DB_PASSWORD}/" \
+          -e "s/__SOURCE_DB_NAME__/$${SOURCE_DB_NAME}/" \
+          /connectors/debezium-project-schema.json > /tmp/debezium-project-schema.json
+      curl -sf -X PUT -H "Content-Type: application/json" \
+        --data @/tmp/debezium-project-schema.json \
+        http://kafka-connect:8083/connectors/gates-project-schema/config
+    restart: "no"
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:v0.7.2
+    mem_limit: 512m
+    depends_on:
+      kafka:
+        condition: service_started
+    ports:
+      # 0.0.0.0 so the team can watch from a browser during the demo without
+      # an SSH tunnel — see terraform/main.tf's allowed_demo_cidr-scoped
+      # security group rule that actually gates who can reach this on AWS.
+      - "0.0.0.0:8082:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: gates
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+
+  minio:
+    image: minio/minio:RELEASE.2024-06-13T22-53-53Z
+    mem_limit: 512m
+    command: server /data --console-address ":9001"
+    ports:
+      - "127.0.0.1:9000:9000"    # S3 API — internal only, not a demo UI
+      - "0.0.0.0:9001:9001"      # console — shown live in the demo
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env}
+    volumes:
+      - ${GATES_DATA_ROOT:-.local-data}/minio:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  minio-init:
+    image: minio/mc:RELEASE.2024-06-13T19-24-20Z
+    mem_limit: 128m
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-ec"]
+    command: |
+      mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"
+      mc mb --ignore-existing local/gates-warehouse
+      mc mb --ignore-existing local/gates-quarantine
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env}
+    restart: "no"
+
+  nessie:
+    image: projectnessie/nessie:0.99.0
+    mem_limit: 512m
+    environment:
+      QUARKUS_HTTP_PORT: 19120
+      QUARKUS_NESSIE_VERSION_STORE_TYPE: IN_MEMORY
+    ports:
+      - "127.0.0.1:19120:19120"
+
+  trino:
+    image: trinodb/trino:455
+    mem_limit: 4g
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
+      nessie:
+        condition: service_started
+    ports:
+      - "0.0.0.0:8081:8080"
+    volumes:
+      - ./deployment/trino/etc:/etc/trino:ro
+      - ${GATES_DATA_ROOT:-.local-data}/trino:/data/trino
+
+  airflow-init:
+    build:
+      context: ./deployment/airflow
+    image: gates-demo-airflow:local
+    mem_limit: 1g
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment: &airflow-environment
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER:-gates}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-gates}
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth
+      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:?Set AIRFLOW_FERNET_KEY in .env}
+      AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY:?Set AIRFLOW_SECRET_KEY in .env}
+      AIRFLOW_ADMIN_USER: ${AIRFLOW_ADMIN_USER:-admin}
+      AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:?Set AIRFLOW_ADMIN_PASSWORD in .env}
+      # ConfigRegistry's DB-backed config path — set globally, so
+      # project_monitoring (seeded in both YAML and this DB) resolves via
+      # the database by default and only falls back to YAML if this DB is
+      # unreachable, while rd_equipment_inventory (DB-only, no YAML files)
+      # depends on this being set at all.
+      GATES_CONFIG_DB_URL: postgresql+psycopg2://${POSTGRES_USER:-gates}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-gates}
+      # The operational database ingest_db_tables() reads rd_equipment_inventory's
+      # multi-table source from — separate from the config DB above.
+      GATES_SOURCE_DB_URL: postgresql+psycopg2://${SOURCE_DB_USER:-gates_source}:${SOURCE_DB_PASSWORD:?Set SOURCE_DB_PASSWORD in .env}@source-db:5432/${SOURCE_DB_NAME:-gates_source}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      # Defaults the API channel to the deterministic fixture file so the
+      # happy path works out of the box with no external dependency. Unset
+      # this (set to an empty string in .env) once
+      # ingestion/airbyte_cdk_connector/secrets/config.json's base_url
+      # points at http://mock-api:8899, to demo the real Airbyte CDK
+      # connector instead — see deployment/README.md.
+      GATES_API_FIXTURE: ${GATES_API_FIXTURE:-/opt/airflow/dags/sample_data/project_monitoring_api.json}
+    volumes: &airflow-volumes
+      - ./orchestration:/opt/airflow/dags/orchestration:ro
+      - ./common:/opt/airflow/dags/common:ro
+      - ./config:/opt/airflow/dags/config:ro
+      - ./ingestion:/opt/airflow/dags/ingestion:ro
+      - ./validation:/opt/airflow/dags/validation:ro
+      - ./metadata:/opt/airflow/dags/metadata:ro
+      - ./transformation:/opt/airflow/dags/transformation
+      - ./staging:/opt/airflow/dags/staging
+      - ./sample_data:/opt/airflow/dags/sample_data:ro
+      - ${GATES_DATA_ROOT:-.local-data}/airflow-logs:/opt/airflow/logs
+    command: bash -ec 'airflow db migrate && airflow users create --username "$${AIRFLOW_ADMIN_USER}" --password "$${AIRFLOW_ADMIN_PASSWORD}" --firstname GATES --lastname Admin --role Admin --email gates@example.com || true'
+
+  airflow:
+    image: gates-demo-airflow:local
+    # Higher than the other services: LocalExecutor runs dbt/Great
+    # Expectations task subprocesses inside this same container, on top of
+    # the webserver+scheduler+triggerer baseline (standalone mode).
+    mem_limit: 3g
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+      trino:
+        condition: service_started
+      kafka:
+        condition: service_started
+      source-db:
+        condition: service_healthy
+      mock-api:
+        condition: service_started
+    ports:
+      - "0.0.0.0:8080:8080"
+    environment: *airflow-environment
+    volumes: *airflow-volumes
+    command: airflow standalone
+
+  datahub-elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.10.1
+    mem_limit: 2g
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      discovery.seed_hosts: "[]"
+      ES_JAVA_OPTS: -Xms1g -Xmx1g
+    volumes:
+      - ${GATES_DATA_ROOT:-.local-data}/datahub-search:/usr/share/elasticsearch/data
+
+  datahub-gms:
+    image: acryldata/datahub-gms:v0.14.1
+    mem_limit: 2g
+    depends_on:
+      datahub-mysql:
+        condition: service_healthy
+      datahub-elasticsearch:
+        condition: service_started
+      kafka:
+        condition: service_started
+    environment:
+      DATAHUB_SERVER_TYPE: quickstart
+      DATAHUB_GMS_PORT: 8080
+      EBEAN_DATASOURCE_USERNAME: datahub
+      EBEAN_DATASOURCE_PASSWORD: ${DATAHUB_MYSQL_PASSWORD:?Set DATAHUB_MYSQL_PASSWORD in .env}
+      EBEAN_DATASOURCE_HOST: datahub-mysql:3306
+      EBEAN_DATASOURCE_URL: jdbc:mysql://datahub-mysql:3306/datahub?useUnicode=true&characterEncoding=utf8&useSSL=false&allowPublicKeyRetrieval=true
+      ELASTICSEARCH_HOST: datahub-elasticsearch
+      ELASTICSEARCH_PORT: 9200
+      KAFKA_BOOTSTRAP_SERVER: kafka:29092
+
+  datahub-frontend:
+    image: acryldata/datahub-frontend-react:v0.14.1
+    mem_limit: 1g
+    depends_on:
+      datahub-gms:
+        condition: service_started
+    ports:
+      - "0.0.0.0:9002:9002"
+    environment:
+      DATAHUB_GMS_HOST: datahub-gms
+      DATAHUB_GMS_PORT: 8080
+      DATAHUB_SECRET: ${DATAHUB_SECRET:?Set DATAHUB_SECRET in .env}
+      DATAHUB_APP_VERSION: gates-demo
+

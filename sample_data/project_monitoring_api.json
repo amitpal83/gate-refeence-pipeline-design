@@ -1,0 +1,34 @@
+{
+  "data": {
+    "records": [
+      {
+        "project_id": "PCHRD-2026-0201",
+        "agency": "PCHRD",
+        "region": "R4A",
+        "program_area": "Health",
+        "project_title": "API demo project",
+        "principal_investigator": "Dr. Demo",
+        "start_date": "2026-01-15",
+        "end_date": "2026-12-15",
+        "budget_allocated_php": 1000000,
+        "budget_utilized_php": 250000,
+        "status": "Ongoing",
+        "funding_source": "GAA"
+      },
+      {
+        "project_id": "PCHRD-2026-0202",
+        "agency": "PCHRD",
+        "region": "R4A",
+        "program_area": "Agriculture",
+        "project_title": "CDC and API integration demo",
+        "principal_investigator": "Dr. Example",
+        "start_date": "2026-02-01",
+        "end_date": "2026-11-30",
+        "budget_allocated_php": 2000000,
+        "budget_utilized_php": 500000,
+        "status": "Proposed",
+        "funding_source": "Special Trust Fund"
+      }
+    ]
+  }
+}

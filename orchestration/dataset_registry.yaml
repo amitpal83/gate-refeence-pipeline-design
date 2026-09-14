@@ -8,7 +8,9 @@ datasets:
     schedule_interval: "@daily"
     api_source_id: dost_pms_api
     file_source_id: pchrd_regional_file_dropbox
-    airbyte_connection_var: project_monitoring_airbyte_connection_id
+    cdc_source_id: project_monitoring_cdc
+    file_folder: "sample_data"
+    file_pattern: "*.csv"
     agency: PCHRD
     # dbt layer chain, in run order. Each name here must match a real
     # `tags=[...]` value on that dataset's dbt models (see
@@ -17,14 +19,16 @@ datasets:
     # declare dbt_layers: [bronze, gold] instead, with no code changes.
     dbt_layers: [bronze, silver, gold]
 
-  # Example second dataset — uncomment and fill in once a second dataset's
-  # Schema Reference Config Repo (schema_<dataset>.yaml, column_aliasing.yaml)
-  # exists:
-  # - dataset: rd_equipment_inventory
-  #   start_date: "2026-03-01"
-  #   schedule_interval: "@weekly"
-  #   api_source_id: some_other_api
-  #   file_source_id: some_other_file_dropbox
-  #   airbyte_connection_var: rd_equipment_inventory_airbyte_connection_id
-  #   agency: PCAARRD
-  #   dbt_layers: [bronze, silver, gold]
+  # Second reference dataset — deliberately has NO config/schema_*.yaml
+  # file. Its schema, source, field mappings, and validation rules all live
+  # only in the config database (see database/init_config_db.sql) — a
+  # single db_multitable ingestion source (two joined tables), not an
+  # api/file/cdc channel, so only db_source_id is set here. This is the
+  # "database-only config" half of the hybrid YAML/DB story, alongside
+  # project_monitoring's YAML-driven config above.
+  - dataset: rd_equipment_inventory
+    start_date: "2026-03-01"
+    schedule_interval: "@weekly"
+    db_source_id: pcaarrd_equipment_registry_db
+    agency: PCAARRD
+    dbt_layers: [bronze, silver, gold]

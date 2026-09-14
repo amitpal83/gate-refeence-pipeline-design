@@ -7,9 +7,9 @@ gates:
     prod:
       type: trino
       method: none
-      host: trino.gates.internal
-      port: 8080
-      user: gates_svc_dbt
-      catalog: iceberg
-      schema: project_mgmt
+      host: "{{ env_var('TRINO_HOST', 'trino') }}"
+      port: "{{ env_var('TRINO_PORT', '8080') | int }}"
+      user: "{{ env_var('TRINO_USER', 'gates_svc_dbt') }}"
+      catalog: "{{ env_var('TRINO_CATALOG', 'iceberg') }}"
+      schema: "{{ env_var('TRINO_SCHEMA', 'gates') }}"
       threads: 4

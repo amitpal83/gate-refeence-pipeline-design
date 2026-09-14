@@ -1,4 +1,5 @@
 """Registers dataset metadata in DataHub."""
+import os
 from datetime import datetime, timezone
 
 DATAHUB_GMS_SERVER = "http://datahub-gms:8080"
@@ -10,8 +11,13 @@ def _emit_via_real_datahub(metadata: dict) -> bool:
 
     URN/platform choices made here, worth reviewing against your actual
     DataHub deployment:
-      - platform="trino", dataset qualified as "iceberg.project_mgmt.<dataset>"
-        — matches transformation/dbt_project/profiles.yml's catalog/schema.
+      - platform="trino", dataset qualified as
+        "{TRINO_CATALOG}.{TRINO_SCHEMA}.<dataset>" — reads the same
+        TRINO_CATALOG/TRINO_SCHEMA env vars
+        transformation/dbt_project/profiles.yml uses (defaults
+        iceberg/gates), so this can't drift out of sync with the catalog
+        dbt actually writes to the way a hardcoded "project_mgmt" schema
+        name previously did.
       - env="PROD" — DataHub's FabricType; hardcoded, not parameterized.
       - Owner is turned into a corpGroup URN by slugifying the free-text
         `owner` string (e.g. "PCHRD M&E unit" -> "pchrd_m&e_unit"). In a
@@ -34,13 +40,20 @@ def _emit_via_real_datahub(metadata: dict) -> bool:
 
     platform = "trino"
     env = "PROD"
-    dataset_fqn = f"iceberg.project_mgmt.{metadata['dataset']}"
+    catalog = os.getenv("TRINO_CATALOG", "iceberg")
+    schema = os.getenv("TRINO_SCHEMA", "gates")
+    # The staging stage lives in its own fixed schema regardless of
+    # TRINO_SCHEMA — see common/trino_loader.py — while bronze/silver/gold
+    # land in whatever schema dbt is configured for.
+    dataset_schema = "staging" if metadata["stage"] == "raw_ingested" else schema
+    dataset_fqn = f"{catalog}.{dataset_schema}.{metadata['dataset']}"
     dataset_urn = f"urn:li:dataset:(urn:li:dataPlatform:{platform},{dataset_fqn},{env})"
 
     # --- Aspect 1: DatasetProperties (schema_ref, DQI, rule summary as custom properties) ---
     custom_props = {
         "schema_ref": metadata["schema_ref"],
         "data_quality_index": str(metadata["data_quality_index"]),
+        "pipeline_stage": metadata["stage"],
         "registered_at": metadata["registered_at"],
     }
     custom_props.update({
@@ -91,12 +104,14 @@ def _emit_via_real_datahub(metadata: dict) -> bool:
 
 def emit_dataset_metadata(dataset: str, owner: str, classification: str,
                            schema_ref: str, lineage: list[str],
-                           data_quality_index: float, rule_results_summary: dict) -> dict:
+                           data_quality_index: float, rule_results_summary: dict,
+                           stage: str = "bronze") -> dict:
     metadata = {
         "dataset": dataset,
         "owner": owner,
         "classification": classification,
         "schema_ref": schema_ref,
+        "stage": stage,
         "lineage": lineage,
         "data_quality_index": data_quality_index,
         "rule_results_summary": rule_results_summary,
@@ -112,6 +127,7 @@ if __name__ == "__main__":
         dataset="project_monitoring", owner="PCHRD M&E unit",
         classification="Project & Knowledge Management",
         schema_ref="schema_project_monitoring.yaml",
+        stage="bronze",
         lineage=["dost_pms_api", "pchrd_regional_file_dropbox", "staging", "bronze"],
         data_quality_index=91.7,
         rule_results_summary={"hard_pass": True, "soft_flags": 1},

@@ -107,3 +107,21 @@ sources:
       (schemas/project_monitoring.yaml, referenced from airbyte_manifest.yaml)
       rather than repeated here — it already matches canonical_schema
       field-for-field, so there is nothing additional to declare.
+
+  - source_id: project_monitoring_cdc
+    channel: kafka_cdc
+    bootstrap_servers: "kafka:29092"
+    database: source_database
+    schema: project_schema
+    # A single, denormalized source table — each Debezium change event on
+    # this table already carries every canonical field, so
+    # ingestion.batch_ingestion.BatchIngestor.ingest_cdc_records can use the
+    # same identity-pass-through path as the API channel (no cross-table
+    # join needed for a per-row CDC event). The "multiple tables from one
+    # database" case is instead demonstrated by the rd_equipment_inventory
+    # dataset's db_multitable source (see database/init_config_db.sql),
+    # which genuinely does join two tables.
+    tables: [projects]
+    topic_pattern: "cdc.project_schema.*"
+    agency: "PCHRD"
+    region: "R4A"

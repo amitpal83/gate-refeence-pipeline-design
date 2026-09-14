@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Secrets / local env
+.env
+.env.local
+
+# Terraform — never commit provider binaries or state
+terraform/.terraform/
+terraform/terraform.tfstate
+terraform/terraform.tfstate.backup
+terraform/.terraform.tfstate.lock.info
+terraform/terraform.tfvars
+*.pem
+
+# Local demo data / runtime output
+.local-data/
+staging/**
+!staging/.gitkeep.md
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+
+# Scratch cleanup folder (orphaned files moved aside for review, not for commit)
+_trash/

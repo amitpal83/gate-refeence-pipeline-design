@@ -134,13 +134,16 @@ def identity_pass_through(raw_df: pd.DataFrame, canonical_fields: list[dict]) ->
 # --------------------------------------------------------------------------- #
 
 def write_staged(df: pd.DataFrame, staging_dir: str | Path, dataset: str,
-                  agency: str, run_date: str, source_id: str) -> dict:
+                  agency: str, run_date: str, source_id: str,
+                  batch_id: str | None = None,
+                  source_object: str | None = None) -> dict:
     """
     Writes the canonicalized dataframe to the staging zone as CSV plus a
     manifest.json. The partitioning convention is
     /staging/{agency}/{dataset}/{date}/.
     """
-    out_dir = Path(staging_dir) / agency / dataset / run_date
+    batch_id = batch_id or f"{dataset}-{run_date}-{source_id}"
+    out_dir = Path(staging_dir) / agency / dataset / run_date / batch_id
     out_dir.mkdir(parents=True, exist_ok=True)
 
     data_path = out_dir / f"raw_{source_id}.csv"
@@ -153,8 +156,10 @@ def write_staged(df: pd.DataFrame, staging_dir: str | Path, dataset: str,
         "agency": agency,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "row_count": len(df),
-        "schema_ref": "schema_project_monitoring.yaml",
+        "batch_id": batch_id,
+        "schema_ref": f"schema_{dataset}.yaml",
         "alias_ref": "column_aliasing.yaml",
+        "source_object": source_object,
         "checksum": f"sha256:{checksum[:16]}...",
         "path": str(data_path),
     }

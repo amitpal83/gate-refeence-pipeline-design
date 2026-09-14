@@ -38,6 +38,11 @@ denormalized as (
         round(
             d.budget_utilized_php / nullif(d.budget_allocated_php, 0) * 100, 1
         ) as budget_utilization_pct,
+        case
+            when d.end_date <= d.start_date then 'soft_violation_invalid_dates'
+            when d.budget_utilized_php > d.budget_allocated_php then 'soft_violation_over_budget'
+            else 'pass'
+        end as quality_flag,
         d.status,
         d.funding_source
         -- dropped: raw_row_id, source_batch_id (internal-only, Bronze-scoped)

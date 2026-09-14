@@ -1,0 +1,21 @@
+{
+  "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+  "database.hostname": "source-db",
+  "database.port": "5432",
+  "database.user": "__SOURCE_DB_USER__",
+  "database.password": "__SOURCE_DB_PASSWORD__",
+  "database.dbname": "__SOURCE_DB_NAME__",
+  "topic.prefix": "cdc",
+  "schema.include.list": "project_schema",
+  "table.include.list": "project_schema.projects",
+  "plugin.name": "pgoutput",
+  "slot.name": "gates_project_schema_slot",
+  "publication.autocreate.mode": "filtered",
+  "topic.creation.enable": "true",
+  "topic.creation.default.partitions": "3",
+  "topic.creation.default.replication.factor": "1",
+  "key.converter": "org.apache.kafka.connect.json.JsonConverter",
+  "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+  "key.converter.schemas.enable": "false",
+  "value.converter.schemas.enable": "false"
+}

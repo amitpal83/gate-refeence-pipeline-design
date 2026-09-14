@@ -7,6 +7,10 @@ models:
     columns:
       - name: project_id
         tests: [not_null, unique]
+      - name: last_updated_at
+        tests: [not_null]
+      - name: dt
+        tests: [not_null]
 
   - name: stg_project_monitoring
     tags: [silver, project_monitoring]
@@ -19,6 +23,12 @@ models:
           - dbt_utils.accepted_range:
               min_value: 0
               max_value: 100
+              severity: warn
+      - name: quality_flag
+        tests:
+          - accepted_values:
+              values: [pass, soft_violation_over_budget, soft_violation_invalid_dates]
+              severity: warn
 
   - name: mart_rd_portfolio_performance
     tags: [gold, project_monitoring]
@@ -29,3 +39,34 @@ models:
           - dbt_utils.accepted_range:
               min_value: 0
               max_value: 100
+              severity: error
+
+  - name: bronze_rd_equipment_inventory
+    tags: [bronze, rd_equipment_inventory]
+    description: "Typed, partitioned promotion of GX-validated staging data (DB-only config dataset)."
+    columns:
+      - name: equipment_id
+        tests: [not_null, unique]
+      - name: last_updated_at
+        tests: [not_null]
+      - name: dt
+        tests: [not_null]
+
+  - name: stg_rd_equipment_inventory
+    tags: [silver, rd_equipment_inventory]
+    description: "Deduped, conformed equipment inventory table."
+    columns:
+      - name: equipment_id
+        tests: [not_null, unique]
+      - name: quality_flag
+        tests:
+          - accepted_values:
+              values: [pass, soft_violation_future_acquisition, soft_violation_assignment_before_acquisition]
+              severity: warn
+
+  - name: mart_equipment_condition_summary
+    tags: [gold, rd_equipment_inventory]
+    description: "Equipment count/value by agency, category, and condition status."
+    columns:
+      - name: equipment_count
+        tests: [not_null]

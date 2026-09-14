@@ -18,28 +18,30 @@ def build_common_suite(validator, schema: dict):
     """Apply the four common-framework checks using only the schema file —
     no dataset-specific logic lives here."""
 
-    field_names = [f["name"] for f in schema["fields"]]
+    canonical_schema = schema["canonical_schema"]
+    fields = canonical_schema["fields"]
+    field_names = [f["name"] for f in fields]
 
     # 1) NULL CHECK — every field marked required: true
-    for f in schema["fields"]:
+    for f in fields:
         if f.get("required"):
             validator.expect_column_values_to_not_be_null(f["name"])
 
     # 2) DUPLICATE CHECK — every field(s) listed under unique_fields
-    for col in schema.get("unique_fields", []):
+    for col in canonical_schema.get("unique_fields", []):
         validator.expect_column_values_to_be_unique(col)
 
     # 3) SCHEMA VALIDATION — column set must match the schema exactly
     validator.expect_table_columns_to_match_set(field_names, exact_match=True)
 
-    for f in schema["fields"]:
+    for f in fields:
         ge_type = {"string": "str", "float": "float64",
                    "integer": "int64", "date": "str"}.get(f["dtype"])
         if ge_type:
             validator.expect_column_values_to_be_of_type(f["name"], ge_type)
 
     # 4) PERMISSIBLE VALUES — any field with a permissible_values list
-    for f in schema["fields"]:
+    for f in fields:
         if "permissible_values" in f:
             validator.expect_column_values_to_be_in_set(
                 f["name"], f["permissible_values"]
@@ -48,15 +50,19 @@ def build_common_suite(validator, schema: dict):
     return validator
 
 
-def run_common_suite(df, schema_path: str, suite_name: str = "common_quality_suite",
+def run_common_suite(df, schema: dict, suite_name: str = "common_quality_suite",
                       custom_suite_fn=None):
     """custom_suite_fn: optional callable(validator) -> validator, e.g.
     gx_custom_suite_project_monitoring.build_custom_suite. Passing it here
     is what actually combines the common + custom suites into ONE
     checkpoint — omitting it (the previous behavior) silently checkpoints
-    the common suite alone."""
-    schema = load_schema(schema_path)
+    the common suite alone.
 
+    `schema` is the already-resolved dataset config dict (from
+    common.config_registry.ConfigRegistry.get_dataset(), whether it came
+    from YAML or the database) — not a file path. This is what lets
+    validation work for datasets that only exist in the config database,
+    with no schema_*.yaml file on disk at all."""
     context = gx.get_context()
     datasource = context.sources.add_or_update_pandas(name="gates_common_ds")
     asset = datasource.add_dataframe_asset(name=schema["dataset"])
@@ -85,6 +91,6 @@ if __name__ == "__main__":
     from gx_custom_suite_project_monitoring import build_custom_suite
 
     df = pd.read_parquet("/staging/dost-pchrd/project_monitoring/2026-08-25/raw.parquet")
-    result = run_common_suite(df, schema_path="schema_project_monitoring.yaml",
+    result = run_common_suite(df, schema=load_schema("schema_project_monitoring.yaml"),
                                custom_suite_fn=build_custom_suite)
     print("Common + custom suite success:", result.success)

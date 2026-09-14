@@ -8,7 +8,11 @@ definitions:
       field_path: ["data"]
 
   requester:
-    url_base: "https://pms.dost.gov.ph/api/v1"
+    # Points at the demo's mock API (deployment/mock-api) by default so the
+    # hand-rolled reader (ingestion/ingest_api_airbyte.py) works out of the
+    # box in docker-compose.demo.yml. Override for production with the real
+    # DOST PMS API base URL (e.g. via --base-url or base_url_override=).
+    url_base: "http://mock-api:8899"
     http_method: "GET"
     authenticator:
       type: BearerAuthenticator

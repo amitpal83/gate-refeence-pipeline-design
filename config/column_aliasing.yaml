@@ -42,3 +42,7 @@ sources:
       canonical_schema in schema_project_monitoring.yaml 1:1. This entry
       exists so every source_id for the dataset is accounted for in one
       place, even when the mapping is the identity mapping.
+
+  - source_id: project_monitoring_cdc
+    channel: kafka_cdc
+    aliases: []

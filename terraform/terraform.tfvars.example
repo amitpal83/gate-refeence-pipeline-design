@@ -1,0 +1,13 @@
+aws_region        = "us-east-1"
+project_name      = "gates-demo"
+environment       = "demo"
+allowed_ssh_cidr  = "203.0.113.10/32"
+# Who can open the demo UIs directly in a browser (Airflow/Trino/Kafka UI/
+# MinIO/DataHub) without an SSH tunnel. Set to the venue/office network
+# range for the demo window; defaults to allowed_ssh_cidr if left unset.
+allowed_demo_cidr = "203.0.113.0/24"
+ssh_key_name      = "gates-demo-key"
+instance_type     = "m6i.2xlarge"
+root_volume_size_gb = 80
+data_volume_size_gb = 400
+backup_bucket_name  = "replace-with-globally-unique-name"

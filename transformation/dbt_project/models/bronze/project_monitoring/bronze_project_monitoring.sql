@@ -31,7 +31,11 @@ select
     cast(budget_utilized_php as decimal(18,2)) as budget_utilized_php,
     cast(status as varchar) as status,
     cast(funding_source as varchar) as funding_source,
-    cast(last_updated_at as timestamp) as last_updated_at,
+    -- last_updated_at isn't a canonical field ingestion ever writes; the
+    -- ingestion-time technical column common/trino_loader.py stamps onto
+    -- every staged row is the real, always-populated source for it —
+    -- used downstream by Silver's "latest wins" dedup ordering.
+    cast(_ingested_at as timestamp) as last_updated_at,
     current_date as dt,
     '{{ invocation_id }}' as dbt_run_id
 from validated_staging

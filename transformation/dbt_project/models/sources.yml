@@ -4,16 +4,21 @@ sources:
   - name: staging
     description: >
       Raw, GX-validated staging tables read by each dataset's Bronze model.
-      Each table here must actually exist and be queryable in Trino/Iceberg
-      before dbt can reference it — see
-      ../setup/create_staging_external_table.sql for the one-time DDL that
-      creates it (not run by the pipeline itself; a setup step).
+      These are real Iceberg tables in the `iceberg` catalog's `staging`
+      schema, created and populated by common/trino_loader.py's
+      ensure_staging_table()/load_validated_batch() — invoked by the
+      promote_to_staging Airflow task right after trigger_gx_validation
+      passes (orchestration/airflow_dag.py). No manual setup step is needed.
     tables:
       - name: project_monitoring_raw
-        description: "Union of the API and file channel staging output, tagged with _gx_validation_status."
+        description: "Union of the API, file, and CDC channel staging output, tagged with _gx_validation_status."
 
-      # A second dataset registered in orchestration/dataset_registry.yaml
-      # needs its own table entry here too, matching its own staging path
-      # and its own setup DDL:
-      # - name: rd_equipment_inventory_raw
-      #   description: "..."
+      - name: rd_equipment_inventory_raw
+        description: >
+          Output of the equipment_schema.equipment +
+          equipment_schema.equipment_assignment multi-table database join
+          (ingestion.batch_ingestion.BatchIngestor.ingest_db_tables),
+          tagged with _gx_validation_status. This dataset's whole config
+          lives in the config database only — see
+          database/init_config_db.sql — proving the DB-backed half of
+          ConfigRegistry's hybrid YAML/DB config end to end.

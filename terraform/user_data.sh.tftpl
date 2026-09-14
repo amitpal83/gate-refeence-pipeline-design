@@ -1,0 +1,53 @@
+#!/bin/bash
+set -euo pipefail
+
+dnf update -y
+dnf install -y docker xfsprogs amazon-cloudwatch-agent git curl
+systemctl enable --now docker
+
+mkdir -p /usr/local/lib/docker/cli-plugins
+curl -fsSL https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-linux-x86_64 \
+  -o /usr/local/lib/docker/cli-plugins/docker-compose
+chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+
+mkdir -p /opt/${project_name}/data
+if ! blkid /dev/sdf; then
+  mkfs.xfs /dev/sdf
+fi
+mount /dev/sdf /opt/${project_name}/data || true
+grep -q "/dev/sdf" /etc/fstab || echo "/dev/sdf /opt/${project_name}/data xfs defaults,nofail 0 2" >> /etc/fstab
+chown -R ec2-user:ec2-user /opt/${project_name}
+
+cat > /opt/${project_name}/start-demo.sh <<'SCRIPT'
+#!/bin/bash
+set -euo pipefail
+APP_DIR=/opt/${project_name}/app
+if [[ ! -f "$APP_DIR/docker-compose.demo.yml" || ! -f "$APP_DIR/.env" ]]; then
+  echo "Copy the repository to $APP_DIR and create $APP_DIR/.env before starting GATES."
+  exit 1
+fi
+cd "$APP_DIR"
+docker compose -f docker-compose.demo.yml up -d --build
+SCRIPT
+chmod +x /opt/${project_name}/start-demo.sh
+
+cat > /etc/systemd/system/${project_name}.service <<SERVICE
+[Unit]
+Description=GATES integrated demo stack
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=ec2-user
+ExecStart=/opt/${project_name}/start-demo.sh
+ExecStop=/usr/bin/docker compose -f /opt/${project_name}/app/docker-compose.demo.yml down
+
+[Install]
+WantedBy=multi-user.target
+SERVICE
+systemctl daemon-reload
+systemctl enable ${project_name}.service
+
+echo "Platform host prepared. Copy the repository and .env to /opt/${project_name}/app, then run systemctl start ${project_name}.service." > /opt/${project_name}/bootstrap.log

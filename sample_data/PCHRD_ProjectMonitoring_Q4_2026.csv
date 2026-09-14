@@ -1,0 +1,4 @@
+Proj_ID,Program,Project Title,PI Name,Start_Date (mm/dd/yyyy),End_Date (mm/dd/yyyy),Budget Allocated (Php),Budget Utilized (Php),Status,Fund Source
+PCHRD-2026-0301,Health,Telemedicine platform for barangay health stations,Dr. E. Villamor,10/01/2025,09/30/2027,"5,000,000.00","1,200,000.00",Ongoing,GAA
+PCHRD-2026-0302,Health,Genomic surveillance for antimicrobial resistance,Dr. C. Bautista,11/15/2025,11/14/2027,"7,500,000.00","900,000.00",Ongoing,Foreign-Assisted
+PCHRD-2026-0303,Health,Low-cost neonatal jaundice screening device,Dr. F. Tan,01/05/2026,12/31/2026,"3,100,000.00","500,000.00",Ongoing,Special Trust Fund

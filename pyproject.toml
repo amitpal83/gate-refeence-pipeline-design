@@ -7,6 +7,7 @@ dependencies = [
     "pandas",
     "pyyaml",
     "requests",
+    "openpyxl",
 ]
 
 # Optional platform dependencies used by the deployed reference implementation:
@@ -14,6 +15,10 @@ dependencies = [
 production = [
     "great-expectations",
     "confluent-kafka",
+    "sqlalchemy",
+    "psycopg2-binary",
+    "pyarrow",
+    "trino",           # common/trino_loader.py — lands validated batches into iceberg.staging.*
     "dbt-core",
     "dbt-trino",       # or dbt-spark, depending on the execution engine
     "datahub",
