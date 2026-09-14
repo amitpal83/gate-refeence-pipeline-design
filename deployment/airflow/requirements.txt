@@ -6,6 +6,7 @@ confluent-kafka>=2.5,<3
 sqlalchemy>=2.0,<3
 psycopg2-binary>=2.9,<3
 pyarrow>=17,<19
+trino>=0.328,<1
 great-expectations>=1.2,<2
 dbt-core>=1.8,<2
 dbt-trino>=1.8,<2
