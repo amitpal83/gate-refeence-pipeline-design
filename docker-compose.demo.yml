@@ -380,8 +380,14 @@ services:
       schema-registry:
         condition: service_started
     environment:
-      EBEAN_DATASOURCE_USERNAME: datahub
-      EBEAN_DATASOURCE_PASSWORD: ${DATAHUB_MYSQL_PASSWORD:?Set DATAHUB_MYSQL_PASSWORD in .env}
+      # This job also has to CREATE the MySQL schema (metadata_aspect_v2
+      # and friends) from scratch on first run — DATAHUB_SQL_SETUP_ENABLED
+      # is what tells it to do so (matches DataHub's own quickstart
+      # recipe), and it needs root, not the scoped "datahub" app user, to
+      # run that DDL.
+      DATAHUB_SQL_SETUP_ENABLED: "true"
+      EBEAN_DATASOURCE_USERNAME: root
+      EBEAN_DATASOURCE_PASSWORD: ${DATAHUB_MYSQL_ROOT_PASSWORD:?Set DATAHUB_MYSQL_ROOT_PASSWORD in .env}
       EBEAN_DATASOURCE_HOST: datahub-mysql:3306
       EBEAN_DATASOURCE_URL: jdbc:mysql://datahub-mysql:3306/datahub?useUnicode=true&characterEncoding=utf8&useSSL=false&allowPublicKeyRetrieval=true
       ELASTICSEARCH_HOST: datahub-elasticsearch
