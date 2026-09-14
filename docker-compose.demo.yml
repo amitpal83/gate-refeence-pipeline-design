@@ -120,7 +120,7 @@ services:
       retries: 10
 
   kafka-connect:
-    image: debezium/connect:2.7
+    image: debezium/connect:2.7.3.Final
     mem_limit: 1g
     depends_on:
       kafka:
@@ -176,7 +176,9 @@ services:
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
 
   minio:
-    image: minio/minio:RELEASE.2024-06-13T22-53-53Z
+    # minio/minio was pulled from Docker Hub entirely (Sept 2026) — MinIO
+    # now publishes to quay.io instead, same tags.
+    image: quay.io/minio/minio:RELEASE.2024-06-13T22-53-53Z
     mem_limit: 512m
     command: server /data --console-address ":9001"
     ports:
@@ -194,7 +196,10 @@ services:
       retries: 10
 
   minio-init:
-    image: minio/mc:RELEASE.2024-06-13T19-24-20Z
+    # Same Docker Hub removal as minio/minio above; the old pinned release
+    # tag isn't retained on quay.io, so using latest here — this is only a
+    # one-shot bucket-creation step, not a long-running service.
+    image: quay.io/minio/mc:latest
     mem_limit: 128m
     depends_on:
       minio:
@@ -210,7 +215,9 @@ services:
     restart: "no"
 
   nessie:
-    image: projectnessie/nessie:0.99.0
+    # projectnessie/nessie on Docker Hub stopped receiving pushes after
+    # 0.76.6 in Jan 2024 — GHCR is the current publish target.
+    image: ghcr.io/projectnessie/nessie:0.99.0
     mem_limit: 512m
     environment:
       QUARKUS_HTTP_PORT: 19120
