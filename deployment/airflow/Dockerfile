@@ -12,11 +12,12 @@ COPY requirements.txt /tmp/gates-requirements.txt
 # faster search — and any real incompatibility fails fast with a clear
 # error naming the two packages in conflict, instead of a silent multi-hour
 # hang.
-RUN pip install --no-cache-dir \
-    "pandas>=2.2,<3" "pyyaml>=6,<7" "requests>=2.32,<3" "openpyxl>=3.1,<4" \
-    "confluent-kafka>=2.5,<3" "sqlalchemy>=2.0,<3" "psycopg2-binary>=2.9,<3" \
-    "pyarrow>=17,<19" "trino>=0.328,<1"
-RUN pip install --no-cache-dir "great-expectations>=1.2,<2"
-RUN pip install --no-cache-dir "dbt-core>=1.8,<2" "dbt-trino>=1.8,<2"
-RUN pip install --no-cache-dir "acryl-datahub>=0.14,<1"
-RUN pip install --no-cache-dir "airbyte-cdk>=0.90,<2"
+# Each RUN below installs a filtered subset of lines straight out of
+# requirements.txt (grep -E, one pattern per layer-grouping) so the file
+# stays the single source of truth — editing a version constraint there is
+# enough, no separate copy to keep in sync in this Dockerfile.
+RUN pip install --no-cache-dir $(grep -E '^(pandas|pyyaml|requests|openpyxl|confluent-kafka|sqlalchemy|psycopg2-binary|pyarrow|trino)[>=<]' /tmp/gates-requirements.txt)
+RUN pip install --no-cache-dir $(grep -E '^great-expectations[>=<]' /tmp/gates-requirements.txt)
+RUN pip install --no-cache-dir $(grep -E '^(dbt-core|dbt-trino)[>=<]' /tmp/gates-requirements.txt)
+RUN pip install --no-cache-dir $(grep -E '^acryl-datahub[>=<]' /tmp/gates-requirements.txt)
+RUN pip install --no-cache-dir $(grep -E '^airbyte-cdk[>=<]' /tmp/gates-requirements.txt)
