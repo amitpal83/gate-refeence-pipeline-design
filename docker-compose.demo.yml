@@ -299,6 +299,13 @@ services:
       # points at http://mock-api:8899, to demo the real Airbyte CDK
       # connector instead — see deployment/README.md.
       GATES_API_FIXTURE: ${GATES_API_FIXTURE:-/opt/airflow/dags/sample_data/project_monitoring_api.json}
+      # This box runs Trino/Elasticsearch/GMS/Kafka/etc. all at once, so
+      # gunicorn's default 120s master timeout and 4 workers were too tight
+      # for the webserver to finish initializing under that load — it kept
+      # giving up with "No response from gunicorn master within 120
+      # seconds" before ever binding port 8080.
+      AIRFLOW__WEBSERVER__WEB_SERVER_MASTER_TIMEOUT: "300"
+      AIRFLOW__WEBSERVER__WORKERS: "2"
     volumes: &airflow-volumes
       - ./orchestration:/opt/airflow/dags/orchestration:ro
       - ./common:/opt/airflow/dags/common:ro
