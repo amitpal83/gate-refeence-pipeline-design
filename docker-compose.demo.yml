@@ -341,6 +341,21 @@ services:
     volumes:
       - ${GATES_DATA_ROOT:-.local-data}/datahub-search:/usr/share/elasticsearch/data
 
+  schema-registry:
+    # DataHub GMS's Kafka producers/consumers (MCE/MAE topics) need a
+    # Confluent-compatible schema registry — without KAFKA_SCHEMAREGISTRY_URL
+    # pointing at one, GMS's own startup wait-for-dependencies script builds
+    # a malformed empty "http://" URL and times out after 4 minutes.
+    image: confluentinc/cp-schema-registry:7.4.0
+    mem_limit: 512m
+    depends_on:
+      kafka:
+        condition: service_started
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: kafka:29092
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+
   datahub-gms:
     image: acryldata/datahub-gms:v0.14.1
     mem_limit: 2g
@@ -350,6 +365,8 @@ services:
       datahub-elasticsearch:
         condition: service_started
       kafka:
+        condition: service_started
+      schema-registry:
         condition: service_started
     environment:
       DATAHUB_SERVER_TYPE: quickstart
@@ -361,6 +378,7 @@ services:
       ELASTICSEARCH_HOST: datahub-elasticsearch
       ELASTICSEARCH_PORT: 9200
       KAFKA_BOOTSTRAP_SERVER: kafka:29092
+      KAFKA_SCHEMAREGISTRY_URL: http://schema-registry:8081
 
   datahub-frontend:
     image: acryldata/datahub-frontend-react:v0.14.1
