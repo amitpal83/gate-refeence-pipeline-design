@@ -379,6 +379,12 @@ services:
       ELASTICSEARCH_PORT: 9200
       KAFKA_BOOTSTRAP_SERVER: kafka:29092
       KAFKA_SCHEMAREGISTRY_URL: http://schema-registry:8081
+      # DataHub defaults to Neo4j as its graph backend (GRAPH_SERVICE_IMPL),
+      # which needs NEO4J_HOST — unset here since we run no Neo4j service,
+      # which built an empty "http://" wait-dependency URL and caused the
+      # 4-minute timeout loop. Elasticsearch (already running for search)
+      # can serve as the graph backend too, avoiding a whole extra service.
+      GRAPH_SERVICE_IMPL: elasticsearch
 
   datahub-frontend:
     image: acryldata/datahub-frontend-react:v0.14.1
