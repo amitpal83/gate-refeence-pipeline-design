@@ -90,10 +90,17 @@ services:
       kafka:
         condition: service_started
     entrypoint: ["/bin/bash", "-ec"]
-    command: |
-      /opt/bitnami/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists --topic gates.ingestion.project_monitoring --partitions 3 --replication-factor 1
-      /opt/bitnami/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists --topic gates.ingestion.rd_equipment_inventory --partitions 3 --replication-factor 1
-      /opt/bitnami/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists --topic cdc.project_schema.projects --partitions 3 --replication-factor 1
+    # A single-item list, not a bare multi-line string: Compose word-splits
+    # a plain `command: |` string (newlines count as whitespace), which
+    # combined with an array-form entrypoint collapses this whole script
+    # down to just its first word as the -c script and silently discards
+    # the rest as unused positional params. Wrapping it as one list item
+    # keeps it as one opaque argv token instead.
+    command:
+      - |
+        /opt/bitnami/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists --topic gates.ingestion.project_monitoring --partitions 3 --replication-factor 1
+        /opt/bitnami/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists --topic gates.ingestion.rd_equipment_inventory --partitions 3 --replication-factor 1
+        /opt/bitnami/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists --topic cdc.project_schema.projects --partitions 3 --replication-factor 1
     restart: "no"
 
   source-db:
@@ -149,15 +156,18 @@ services:
       SOURCE_DB_PASSWORD: ${SOURCE_DB_PASSWORD:?Set SOURCE_DB_PASSWORD in .env}
       SOURCE_DB_NAME: ${SOURCE_DB_NAME:-gates_source}
     entrypoint: ["/bin/sh", "-ec"]
-    command: |
-      until curl -sf http://kafka-connect:8083/connectors; do sleep 3; done
-      sed -e "s/__SOURCE_DB_USER__/$${SOURCE_DB_USER}/" \
-          -e "s/__SOURCE_DB_PASSWORD__/$${SOURCE_DB_PASSWORD}/" \
-          -e "s/__SOURCE_DB_NAME__/$${SOURCE_DB_NAME}/" \
-          /connectors/debezium-project-schema.json > /tmp/debezium-project-schema.json
-      curl -sf -X PUT -H "Content-Type: application/json" \
-        --data @/tmp/debezium-project-schema.json \
-        http://kafka-connect:8083/connectors/gates-project-schema/config
+    # See kafka-init's comment above — same fix, one list item instead of a
+    # bare multi-line string.
+    command:
+      - |
+        until curl -sf http://kafka-connect:8083/connectors; do sleep 3; done
+        sed -e "s/__SOURCE_DB_USER__/$${SOURCE_DB_USER}/" \
+            -e "s/__SOURCE_DB_PASSWORD__/$${SOURCE_DB_PASSWORD}/" \
+            -e "s/__SOURCE_DB_NAME__/$${SOURCE_DB_NAME}/" \
+            /connectors/debezium-project-schema.json > /tmp/debezium-project-schema.json
+        curl -sf -X PUT -H "Content-Type: application/json" \
+          --data @/tmp/debezium-project-schema.json \
+          http://kafka-connect:8083/connectors/gates-project-schema/config
     restart: "no"
 
   kafka-ui:
@@ -205,10 +215,13 @@ services:
       minio:
         condition: service_healthy
     entrypoint: ["/bin/sh", "-ec"]
-    command: |
-      mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"
-      mc mb --ignore-existing local/gates-warehouse
-      mc mb --ignore-existing local/gates-quarantine
+    # See kafka-init's comment above — same fix, one list item instead of a
+    # bare multi-line string.
+    command:
+      - |
+        mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"
+        mc mb --ignore-existing local/gates-warehouse
+        mc mb --ignore-existing local/gates-quarantine
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env}
