@@ -62,7 +62,12 @@ services:
       KAFKA_CFG_LISTENERS: INTERNAL://:29092,LOCAL://:9092
       KAFKA_CFG_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,LOCAL://localhost:9092
       KAFKA_CFG_INTER_BROKER_LISTENER_NAME: INTERNAL
-      KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE: "false"
+      # DataHub needs many internal Kafka topics of its own (upgrade
+      # history, MCE/MAE, failed-event dead-letter, etc.) beyond the 3 this
+      # pipeline pre-creates in kafka-init — rather than hand-enumerating
+      # DataHub's full internal topic list (long and version-specific),
+      # just let topics auto-create on first use.
+      KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE: "true"
       ALLOW_PLAINTEXT_LISTENER: "yes"
     volumes:
       - ${GATES_DATA_ROOT:-.local-data}/kafka:/bitnami
