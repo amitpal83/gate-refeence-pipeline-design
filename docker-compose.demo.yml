@@ -385,6 +385,13 @@ services:
       # 4-minute timeout loop. Elasticsearch (already running for search)
       # can serve as the graph backend too, avoiding a whole extra service.
       GRAPH_SERVICE_IMPL: elasticsearch
+      # Without this, GMS falls back to a source-tree-relative default path
+      # that doesn't exist in the packaged image, and fails with
+      # FileNotFoundException before it ever starts serving.
+      ENTITY_REGISTRY_CONFIG_PATH: /datahub/datahub-gms/resources/entity-registry.yml
+      # metadata/datahub_emit.py's DatahubRestEmitter calls the GMS REST API
+      # unauthenticated — matches DataHub's own quickstart default.
+      METADATA_SERVICE_AUTH_ENABLED: "false"
 
   datahub-frontend:
     image: acryldata/datahub-frontend-react:v0.14.1
