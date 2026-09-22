@@ -56,6 +56,23 @@ def validate(staged_csv_paths: list[str], config_dir: Path, dataset: str = "proj
     if unexpected:
         raise ValueError(f"Unexpected staged columns for {dataset}: {sorted(unexpected)}")
     validation_df = df[[column for column in df.columns if column in canonical_fields]]
+    # Every staged CSV is read with dtype=str above (deliberately, to avoid
+    # pandas' own type-inference surprises across sources) — but that means
+    # every column is still a raw string here, including budget/numeric
+    # fields. Left uncast, expect_column_values_to_be_of_type("float64")
+    # always fails (observed type is str), and worse,
+    # expect_column_pair_values_A_to_be_greater_than_B compares them as
+    # STRINGS ('7500000.0' < '900000.0' lexicographically, even though it's
+    # numerically larger) — silently wrong, not just a failed check. Cast
+    # each canonical field to its declared dtype before validating.
+    for field in contract["canonical_schema"]["fields"]:
+        name = field["name"]
+        if name not in validation_df.columns:
+            continue
+        if field["dtype"] == "float":
+            validation_df[name] = pd.to_numeric(validation_df[name], errors="coerce")
+        elif field["dtype"] == "integer":
+            validation_df[name] = pd.to_numeric(validation_df[name], errors="coerce").astype("Int64")
 
     real_gx_result = _try_real_great_expectations(validation_df, contract, dataset)
     success = bool(getattr(real_gx_result, "success", False))

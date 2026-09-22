@@ -157,9 +157,17 @@ class ConfigRegistry:
                 }
                 for row in sources
             ],
+            # Built from `sources`, not just by_source.items() — a source
+            # with no field_mapping rows (identity-mapped, e.g. dost_pms_api
+            # and project_monitoring_cdc both map 1:1 onto the canonical
+            # schema already) must still get a field_aliasing entry with an
+            # empty aliases list, matching the YAML config path. Otherwise
+            # BatchIngestor._aliases() can't find the source at all and
+            # raises KeyError instead of correctly falling through to
+            # identity_pass_through.
             "field_aliasing": [
-                {"source_id": source_id, "aliases": aliases}
-                for source_id, aliases in by_source.items()
+                {"source_id": row["source_id"], "aliases": by_source.get(row["source_id"], [])}
+                for row in sources
             ],
             "validation_rules": [
                 {

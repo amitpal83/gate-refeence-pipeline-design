@@ -35,7 +35,12 @@ select
     -- ingestion-time technical column common/trino_loader.py stamps onto
     -- every staged row is the real, always-populated source for it —
     -- used downstream by Silver's "latest wins" dedup ordering.
-    cast(_ingested_at as timestamp) as last_updated_at,
+    -- _ingested_at is Python's datetime.isoformat() — a "T" separator and
+    -- a "+00:00" offset — which plain cast(... as timestamp) rejects
+    -- (Trino's TIMESTAMP cast only accepts "YYYY-MM-DD HH:MM:SS[.ffffff]",
+    -- no "T", no offset). from_iso8601_timestamp() parses that format
+    -- correctly, returning TIMESTAMP WITH TIME ZONE; cast drops the zone.
+    cast(from_iso8601_timestamp(_ingested_at) as timestamp) as last_updated_at,
     current_date as dt,
     '{{ invocation_id }}' as dbt_run_id
 from validated_staging

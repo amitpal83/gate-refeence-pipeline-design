@@ -40,9 +40,15 @@ INSERT INTO project_schema.projects
     (project_id, agency, region, program_area, project_title, principal_investigator,
      start_date, end_date, budget_allocated_php, budget_utilized_php, status, funding_source)
 VALUES
-    ('PCHRD-2026-0201', 'PCHRD', 'R4A', 'Health', 'Point-of-care diagnostics for dengue', 'Dr. R. Santos',
+    -- 0401/0402, not 0201/0202: sample_data/project_monitoring_api.json's
+    -- dost_pms_api fixture already uses PCHRD-2026-0201/0202 — reusing
+    -- those here made this channel's rows collide with the API channel's
+    -- on project_id (the dataset's hard PK) the moment both get combined
+    -- for validation, failing expect_column_values_to_be_unique every
+    -- single run regardless of any other fix.
+    ('PCHRD-2026-0401', 'PCHRD', 'R4A', 'Health', 'Point-of-care diagnostics for dengue', 'Dr. R. Santos',
      '2026-02-01', '2026-12-15', 4200000.00, 1150000.00, 'Ongoing', 'GAA'),
-    ('PCHRD-2026-0202', 'PCHRD', 'NCR', 'Health', 'AI-assisted TB screening', 'Dr. M. Cruz',
+    ('PCHRD-2026-0402', 'PCHRD', 'NCR', 'Health', 'AI-assisted TB screening', 'Dr. M. Cruz',
      '2026-03-15', NULL, 6800000.00, 2040000.00, 'Ongoing', 'Foreign-Assisted')
 ON CONFLICT (project_id) DO NOTHING;
 

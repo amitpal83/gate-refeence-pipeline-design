@@ -7,8 +7,18 @@ sqlalchemy>=1.4.36,<2.0
 psycopg2-binary>=2.9,<3
 pyarrow>=17,<19
 trino>=0.328,<1
-great-expectations>=1.2,<2
+# validation/gx_common_suite.py is written against the Fluent Datasources
+# API (context.sources.add_or_update_pandas, add_or_update_checkpoint(
+# validator=...), etc.) that GX 0.15-0.18 shipped — GX 1.0's rewrite removed
+# it, so EphemeralDataContext has no .sources attribute under >=1. Pin to
+# the version this code actually targets rather than the newest release.
+great-expectations>=0.18,<1
 dbt-core>=1.8,<2
 dbt-trino>=1.8,<2
 acryl-datahub>=0.14,<1
 airbyte-cdk>=6,<8
+# great-expectations pulls in boto3/botocore, whose optional urllib3 pyOpenSSL
+# integration breaks against a modern `cryptography` (removed legacy bindings
+# like GEN_EMAIL that older pyOpenSSL still references) — pin explicitly so
+# pip's per-stage resolver can't land on an incompatible pair.
+pyopenssl>=24,<25

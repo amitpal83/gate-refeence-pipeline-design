@@ -80,16 +80,24 @@ on 8899 stay loopback-only — they're not meant to be browsed.)
 
 ## AWS deployment
 
-1. Create an EC2 key pair and note its name.
-2. Copy `terraform/terraform.tfvars.example` to `terraform/terraform.tfvars`.
-3. Set `allowed_ssh_cidr` to the demo operator's public IP with `/32`.
-4. Set `allowed_demo_cidr` to whatever network the team will actually watch
+There is no SSH ingress rule on this instance at all — admin access goes
+through AWS Systems Manager Session Manager instead (the instance role
+already has `AmazonSSMManagedInstanceCore`, and Amazon Linux 2023 runs the
+SSM Agent by default). That means access is gated by your AWS IAM
+permissions, not a CIDR that breaks every time your IP changes. You do need
+the [Session Manager plugin for the AWS CLI](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html)
+installed locally, and your IAM user needs `ssm:StartSession` permission.
+
+1. Copy `terraform/terraform.tfvars.example` to `terraform/terraform.tfvars`.
+2. Set `allowed_demo_cidr` to whatever network the team will actually watch
    the demo from (the venue's Wi-Fi range, or a wider `/24` if people join
-   from different places) — this is what lets everyone open the UIs
-   directly in a browser instead of tunneling over SSH. Defaults to
-   `allowed_ssh_cidr` if left unset, which usually means only you can see it.
-5. Set `ssh_key_name` and a globally unique backup bucket name.
-6. Run Terraform validation and review the plan:
+   from different places) — this is the only network-level access control
+   on the instance, since it gates the browser-facing demo UI ports (SSH
+   isn't affected since there isn't any).
+3. Leave `ssh_key_name` as `""` unless you specifically want an EC2 key
+   pair attached anyway (it has no effect unless you also open port 22
+   yourself).
+4. Run Terraform validation and review the plan:
 
 ```powershell
 terraform -chdir=terraform init
@@ -103,26 +111,43 @@ No resources are created by `validate` or `plan`. Provision only after the plan 
 terraform -chdir=terraform apply -var-file=terraform.tfvars
 ```
 
-After the EC2 host is ready, copy the repository and `.env` to the host. The EC2 bootstrap creates `/opt/gates-demo/start-demo.sh` and a guarded `gates-demo.service`; it will not start until both the repository and `.env` exist.
+After the EC2 host is ready, open a shell on it via SSM (no key, no IP dependency):
 
 ```powershell
-$ip = terraform -chdir=terraform output -raw platform_public_ip
-scp -i .\gates-demo.pem -r .\* ec2-user@${ip}:/opt/gates-demo/app/
-scp -i .\gates-demo.pem .env ec2-user@${ip}:/opt/gates-demo/app/.env
-ssh -i .\gates-demo.pem ec2-user@${ip} "sudo systemctl start gates-demo.service"
+terraform -chdir=terraform output ssm_session_command
+# run the command it prints, e.g.:
+aws ssm start-session --target <instance-id> --region us-east-1
+```
+
+Inside that session, clone the repo from GitHub and create `.env` directly on the instance (paste the same secret values you generated locally, or generate fresh ones):
+
+```bash
+sudo mkdir -p /opt/gates-demo/app && sudo chown ec2-user:ec2-user /opt/gates-demo/app
+git clone https://github.com/<your-org>/<your-repo>.git /opt/gates-demo/app
+cd /opt/gates-demo/app
+cat > .env << 'EOF'
+POSTGRES_PASSWORD=...
+SOURCE_DB_PASSWORD=...
+MINIO_ROOT_PASSWORD=...
+DATAHUB_MYSQL_ROOT_PASSWORD=...
+DATAHUB_MYSQL_PASSWORD=...
+DATAHUB_SECRET=...
+AIRFLOW_ADMIN_PASSWORD=...
+AIRFLOW_SECRET_KEY=...
+AIRFLOW_FERNET_KEY=...
+EOF
+sudo systemctl start gates-demo.service
 ```
 
 The Compose volumes use `GATES_DATA_ROOT=/opt/gates-demo/data`, which is the attached encrypted EBS volume.
 
 Once the stack is up, run `terraform -chdir=terraform output demo_ui_urls` for
 direct browser links to Airflow/Trino/Kafka UI/MinIO/DataHub — reachable
-from `allowed_demo_cidr`, no SSH tunnel required. The `ssh_tunnel_command`
-output is still there as a fallback for anyone outside that range, or for
-solo debugging.
+from `allowed_demo_cidr`.
 
 **After the demo**, tighten `allowed_demo_cidr` back down (re-apply with it
-set to your own IP, or removed) — these are demo-grade services with
-default/simple credentials, not hardened for open-ended internet exposure.
+set to your own IP) — these are demo-grade services with default/simple
+credentials, not hardened for open-ended internet exposure.
 
 ## Current scope
 

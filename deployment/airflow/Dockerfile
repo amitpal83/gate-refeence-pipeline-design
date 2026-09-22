@@ -27,3 +27,7 @@ RUN pip install --no-cache-dir $(grep -E '^great-expectations[>=<]' /tmp/gates-r
 RUN pip install --no-cache-dir $(grep -E '^acryl-datahub[>=<]' /tmp/gates-requirements.txt)
 RUN pip install --no-cache-dir $(grep -E '^airbyte-cdk[>=<]' /tmp/gates-requirements.txt)
 RUN pip install --no-cache-dir $(grep -E '^(dbt-core|dbt-trino)[>=<]' /tmp/gates-requirements.txt)
+# Installed LAST, after every other stage, so it wins regardless of which
+# earlier stage's resolve pulled in an older pyOpenSSL alongside boto3 —
+# see requirements.txt's comment for why this pin exists at all.
+RUN pip install --no-cache-dir $(grep -E '^pyopenssl[>=<]' /tmp/gates-requirements.txt)

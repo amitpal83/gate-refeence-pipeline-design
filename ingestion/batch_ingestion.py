@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -163,7 +163,44 @@ class BatchIngestor:
             for column in ("_cdc_operation", "_source_table", "_operation_timestamp"):
                 if column in raw:
                     canonical[column] = raw[column].values
+            # A CDC topic is a stream of changes over time, not a
+            # current-state snapshot — re-consuming it (this ingestion
+            # re-reads from the earliest offset every run, for demo
+            # repeatability) yields one row per historical event per key,
+            # not one row per entity. Collapse to the latest event per
+            # unique key (by _operation_timestamp) so this matches what the
+            # file/API channels already produce, and so it doesn't fail the
+            # dataset's hard uniqueness check downstream.
+            unique_fields = config.get("canonical_schema", {}).get("unique_fields", [])
+            if unique_fields and "_operation_timestamp" in canonical.columns:
+                canonical = (
+                    canonical.sort_values("_operation_timestamp")
+                    .drop_duplicates(subset=unique_fields, keep="last")
+                    .reset_index(drop=True)
+                )
+        for field in get_canonical_fields(config):
+            if field.get("dtype") == "date" and field["name"] in canonical.columns:
+                canonical[field["name"]] = self._decode_debezium_dates(canonical[field["name"]])
         return canonical
+
+    @staticmethod
+    def _decode_debezium_dates(column: pd.Series) -> pd.Series:
+        """Debezium's io.debezium.time.Date logical type serializes a
+        Postgres DATE column as days-since-epoch (a plain integer) rather
+        than a formatted date string — e.g. 20802 for a 2026 date. Only CDC
+        records carry this encoding (the file channel's aliasing already
+        parses its own mm/dd/yyyy strings, and the API fixture already
+        emits ISO dates), so this is a no-op whenever the column already
+        holds strings. Left undecoded, dateutil's fuzzy parser reads a bare
+        number like this as a literal year and blows up with "year 20802
+        is out of range" deep inside Great Expectations' metric engine.
+        """
+        if not pd.api.types.is_numeric_dtype(column):
+            return column
+        epoch = date(1970, 1, 1)
+        return column.apply(
+            lambda days: (epoch + timedelta(days=int(days))).isoformat() if pd.notna(days) else days
+        )
 
     @staticmethod
     def _read_file(path: Path) -> pd.DataFrame:

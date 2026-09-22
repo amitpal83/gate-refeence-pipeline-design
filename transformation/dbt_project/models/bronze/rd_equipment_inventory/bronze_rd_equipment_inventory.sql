@@ -29,7 +29,7 @@ select
     cast(custodian_name as varchar) as custodian_name,
     cast(assigned_office as varchar) as assigned_office,
     cast(last_assignment_date as date) as last_assignment_date,
-    cast(_ingested_at as timestamp) as last_updated_at,
+    cast(from_iso8601_timestamp(_ingested_at) as timestamp) as last_updated_at,
     current_date as dt,
     '{{ invocation_id }}' as dbt_run_id
 from validated_staging
