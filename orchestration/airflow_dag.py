@@ -147,6 +147,23 @@ def _make_trigger_gx_validation(dataset: str):
         staged_paths = glob.glob(
             str(repo_root / "staging" / "**" / dataset / "**" / "raw_*.csv"), recursive=True
         )
+        # Two things the blanket glob above would otherwise get wrong:
+        # 1) it also matches staging/quarantine/** (any path with "dataset"
+        #    as a segment), so every previously-quarantined batch keeps
+        #    getting re-validated and re-quarantined forever.
+        # 2) repeated triggers on the same day create a NEW batch folder
+        #    per source each time (file/API channels don't overwrite), so
+        #    without this every historical batch gets concatenated
+        #    together — the same project_id showing up once per past run,
+        #    always failing uniqueness. Keep only the newest file per
+        #    source_id (from its raw_{source_id}.csv filename).
+        staged_paths = [p for p in staged_paths if "quarantine" not in _Path(p).parts]
+        latest_by_source: dict[str, str] = {}
+        for path in staged_paths:
+            source_id = _Path(path).stem.removeprefix("raw_")
+            if source_id not in latest_by_source or _Path(path).stat().st_mtime > _Path(latest_by_source[source_id]).stat().st_mtime:
+                latest_by_source[source_id] = path
+        staged_paths = list(latest_by_source.values())
         report, _df = validate(staged_paths, repo_root / "config", dataset=dataset)
 
         context["ti"].xcom_push(key="data_quality_index", value=report["data_quality_index"])
@@ -235,7 +252,12 @@ def _make_ingest_cdc(dataset: str, source_id: str):
                         continue
                     if message.error():
                         raise RuntimeError(message.error())
-                    records.append(json.loads(message.value().decode("utf-8")))
+                    value = message.value()
+                    if value is None:
+                        # Debezium's delete tombstone: same key, null value —
+                        # not a change event to ingest.
+                        continue
+                    records.append(json.loads(value.decode("utf-8")))
             finally:
                 consumer.close()
 
