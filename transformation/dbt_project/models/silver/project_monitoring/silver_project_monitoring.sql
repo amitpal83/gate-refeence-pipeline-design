@@ -1,6 +1,7 @@
 {{
   config(
     materialized='table',
+    alias='project_monitoring',
     tags=['silver', 'project_monitoring']
   )
 }}

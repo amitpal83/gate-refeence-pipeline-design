@@ -4,7 +4,7 @@ sources:
   - name: staging
     description: >
       Raw, GX-validated staging tables read by each dataset's Bronze model.
-      These are real Iceberg tables in the `iceberg` catalog's `staging`
+      These are real Iceberg tables in the `gates` catalog's `staging`
       schema, created and populated by common/trino_loader.py's
       ensure_staging_table()/load_validated_batch() — invoked by the
       promote_to_staging Airflow task right after trigger_gx_validation

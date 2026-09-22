@@ -12,12 +12,20 @@ def _emit_via_real_datahub(metadata: dict) -> bool:
     URN/platform choices made here, worth reviewing against your actual
     DataHub deployment:
       - platform="trino", dataset qualified as
-        "{TRINO_CATALOG}.{TRINO_SCHEMA}.<dataset>" — reads the same
-        TRINO_CATALOG/TRINO_SCHEMA env vars
-        transformation/dbt_project/profiles.yml uses (defaults
-        iceberg/gates), so this can't drift out of sync with the catalog
-        dbt actually writes to the way a hardcoded "project_mgmt" schema
-        name previously did.
+        "{TRINO_CATALOG}.{layer_schema}.<table>" — each pipeline stage maps
+        directly to its own physical Trino schema (bronze/silver/gold/
+        staging; see transformation/dbt_project/dbt_project.yml's +schema
+        per layer and common/trino_loader.py's staging schema), matching
+        the actual medallion-per-schema layout dbt writes to, not a single
+        flat schema. TRINO_CATALOG defaults to "gates" to match
+        transformation/dbt_project/profiles.yml.
+      - `dataset_table` (physical table name) defaults to `dataset` (the
+        pipeline's dataset key, e.g. "project_monitoring") for
+        bronze/silver, where the table is a 1:1 promotion of that entity —
+        but Gold tables are aggregates with their own names (e.g.
+        "agg_rd_portfolio_performance"), so callers registering a Gold
+        stage must pass the real table name or this URN points at a table
+        that doesn't exist.
       - env="PROD" — DataHub's FabricType; hardcoded, not parameterized.
       - Owner is turned into a corpGroup URN by slugifying the free-text
         `owner` string (e.g. "PCHRD M&E unit" -> "pchrd_m&e_unit"). In a
@@ -33,6 +41,8 @@ def _emit_via_real_datahub(metadata: dict) -> bool:
         DatasetPropertiesClass, GlobalTagsClass, TagAssociationClass,
         OwnershipClass, OwnerClass, OwnershipTypeClass,
         UpstreamLineageClass, UpstreamClass, DatasetLineageTypeClass,
+        SchemaMetadataClass, SchemaFieldClass, SchemaFieldDataTypeClass,
+        OtherSchemaClass, StringTypeClass, NumberTypeClass, DateTypeClass, BooleanTypeClass,
     )
 
     emitter = DatahubRestEmitter(gms_server=DATAHUB_GMS_SERVER)
@@ -40,13 +50,15 @@ def _emit_via_real_datahub(metadata: dict) -> bool:
 
     platform = "trino"
     env = "PROD"
-    catalog = os.getenv("TRINO_CATALOG", "iceberg")
-    schema = os.getenv("TRINO_SCHEMA", "gates")
-    # The staging stage lives in its own fixed schema regardless of
-    # TRINO_SCHEMA — see common/trino_loader.py — while bronze/silver/gold
-    # land in whatever schema dbt is configured for.
-    dataset_schema = "staging" if metadata["stage"] == "raw_ingested" else schema
-    dataset_fqn = f"{catalog}.{dataset_schema}.{metadata['dataset']}"
+    catalog = os.getenv("TRINO_CATALOG", "gates")
+    # Each pipeline stage is a real, separate Trino schema — see
+    # dbt_project.yml's +schema per layer and trino_loader.py's staging
+    # schema — so the URN's schema segment maps directly to the stage,
+    # rather than one flat TRINO_SCHEMA for everything past ingestion.
+    dataset_schema = {"raw_ingested": "staging", "bronze": "bronze",
+                       "silver": "silver", "gold": "gold"}.get(metadata["stage"], "default")
+    table_name = metadata.get("dataset_table") or metadata["dataset"]
+    dataset_fqn = f"{catalog}.{dataset_schema}.{table_name}"
     dataset_urn = f"urn:li:dataset:(urn:li:dataPlatform:{platform},{dataset_fqn},{env})"
 
     # --- Aspect 1: DatasetProperties (schema_ref, DQI, rule summary as custom properties) ---
@@ -85,7 +97,41 @@ def _emit_via_real_datahub(metadata: dict) -> bool:
         ]),
     ))
 
-    # --- Aspect 4: UpstreamLineage ---
+    # --- Aspect 4: SchemaMetadata (column list — makes the dataset's
+    # "Schema" tab in the DataHub UI actually show something; without this
+    # aspect a dataset is still searchable by name/description/tags, but
+    # its columns are invisible in the UI). Optional: callers that don't
+    # have a field list handy (e.g. Gold aggregates with no canonical
+    # schema of their own) can omit it. dtype names match
+    # config/schema_*.yaml's canonical_schema.fields — see ConfigRegistry.
+    if metadata.get("fields"):
+        type_map = {
+            "string": StringTypeClass(), "float": NumberTypeClass(),
+            "integer": NumberTypeClass(), "date": DateTypeClass(),
+            "boolean": BooleanTypeClass(),
+        }
+        schema_fields = [
+            SchemaFieldClass(
+                fieldPath=field["name"],
+                type=SchemaFieldDataTypeClass(type=type_map.get(field.get("dtype"), StringTypeClass())),
+                nativeDataType=field.get("dtype", "string"),
+                description=field.get("description"),
+            )
+            for field in metadata["fields"]
+        ]
+        emitter.emit(MetadataChangeProposalWrapper(
+            entityUrn=dataset_urn,
+            aspect=SchemaMetadataClass(
+                schemaName=f"{metadata['dataset']}_schema",
+                platform=f"urn:li:dataPlatform:{platform}",
+                version=0,
+                hash="",
+                platformSchema=OtherSchemaClass(rawSchema=""),
+                fields=schema_fields,
+            ),
+        ))
+
+    # --- Aspect 5: UpstreamLineage ---
     if metadata["lineage"]:
         upstreams = [
             UpstreamClass(
@@ -105,14 +151,22 @@ def _emit_via_real_datahub(metadata: dict) -> bool:
 def emit_dataset_metadata(dataset: str, owner: str, classification: str,
                            schema_ref: str, lineage: list[str],
                            data_quality_index: float, rule_results_summary: dict,
-                           stage: str = "bronze") -> dict:
+                           stage: str = "bronze", dataset_table: str | None = None,
+                           fields: list[dict] | None = None) -> dict:
+    """dataset_table: the physical table name if it differs from `dataset`
+    (Gold aggregates are named for their use case, not the source entity —
+    see _emit_via_real_datahub's docstring). fields: canonical_schema.fields
+    from ConfigRegistry, used to populate the DataHub Schema tab; omit for
+    stages with no directly-corresponding field list."""
     metadata = {
         "dataset": dataset,
+        "dataset_table": dataset_table,
         "owner": owner,
         "classification": classification,
         "schema_ref": schema_ref,
         "stage": stage,
         "lineage": lineage,
+        "fields": fields,
         "data_quality_index": data_quality_index,
         "rule_results_summary": rule_results_summary,
         "registered_at": datetime.now(timezone.utc).isoformat(),

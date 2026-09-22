@@ -1,12 +1,13 @@
 {{
   config(
     materialized='table',
+    alias='rd_equipment_inventory',
     tags=['silver', 'rd_equipment_inventory']
   )
 }}
 
 -- Silver: dedupe + soft-rule quality_flag (flag-and-promote, not drop —
--- same policy as stg_project_monitoring.sql's quality_flag).
+-- same policy as silver_project_monitoring.sql's quality_flag).
 with bronze as (
     select * from {{ ref('bronze_rd_equipment_inventory') }}
 ),

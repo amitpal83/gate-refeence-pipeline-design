@@ -1,6 +1,7 @@
 {{
   config(
     materialized='table',
+    alias='rd_equipment_inventory',
     tags=['bronze', 'rd_equipment_inventory'],
     partition_by={'field': 'dt', 'data_type': 'date'}
   )

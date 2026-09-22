@@ -253,7 +253,7 @@ services:
         condition: service_started
     ports:
       - "0.0.0.0:8081:8080"
-    # deployment/trino/etc/catalog/iceberg.properties resolves
+    # deployment/trino/etc/catalog/gates.properties resolves
     # ${ENV:MINIO_ROOT_USER}/${ENV:MINIO_ROOT_PASSWORD} from the
     # container's own OS environment — without these, Trino fails at
     # startup with "Environment variable is not set" before binding its

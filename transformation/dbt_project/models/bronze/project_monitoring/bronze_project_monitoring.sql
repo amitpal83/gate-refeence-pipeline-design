@@ -1,6 +1,7 @@
 {{
   config(
     materialized='table',
+    alias='project_monitoring',
     tags=['bronze', 'project_monitoring'],
     partition_by={'field': 'dt', 'data_type': 'date'}
   )

@@ -1,14 +1,15 @@
 {{
   config(
     materialized='table',
+    alias='agg_equipment_condition_summary',
     tags=['gold', 'rd_equipment_inventory']
   )
 }}
 
 -- Gold: equipment condition/value rollup by agency, category, and status —
--- the equipment-dataset counterpart to mart_rd_portfolio_performance.sql.
+-- the equipment-dataset counterpart to gold_agg_rd_portfolio_performance.sql.
 with silver as (
-    select * from {{ ref('stg_rd_equipment_inventory') }}
+    select * from {{ ref('silver_rd_equipment_inventory') }}
 )
 
 select

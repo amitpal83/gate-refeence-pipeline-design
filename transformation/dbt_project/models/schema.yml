@@ -8,7 +8,7 @@ models:
       # Bronze is raw/as-is (every validated batch appended, one row per
       # ingested record) — the same project_id legitimately reappears
       # across batches/runs. Dedup is Silver's job (see
-      # stg_project_monitoring's own unique test below); enforcing it here
+      # silver_project_monitoring's own unique test below); enforcing it here
       # fails on the second ingestion of any project, every time.
       - name: project_id
         tests: [not_null]
@@ -17,7 +17,7 @@ models:
       - name: dt
         tests: [not_null]
 
-  - name: stg_project_monitoring
+  - name: silver_project_monitoring
     tags: [silver, project_monitoring]
     description: "Denormalized, deduped, conformed project monitoring table."
     columns:
@@ -35,7 +35,7 @@ models:
               values: [pass, soft_violation_over_budget, soft_violation_invalid_dates]
               severity: warn
 
-  - name: mart_rd_portfolio_performance
+  - name: gold_agg_rd_portfolio_performance
     tags: [gold, project_monitoring]
     description: "Budget allocation/utilization by agency, program, region, quarter."
     columns:
@@ -51,7 +51,7 @@ models:
     description: "Typed, partitioned promotion of GX-validated staging data (DB-only config dataset)."
     columns:
       # Same reasoning as bronze_project_monitoring above — Bronze is
-      # as-is/appended, dedup happens in stg_rd_equipment_inventory.
+      # as-is/appended, dedup happens in silver_rd_equipment_inventory.
       - name: equipment_id
         tests: [not_null]
       - name: last_updated_at
@@ -59,7 +59,7 @@ models:
       - name: dt
         tests: [not_null]
 
-  - name: stg_rd_equipment_inventory
+  - name: silver_rd_equipment_inventory
     tags: [silver, rd_equipment_inventory]
     description: "Deduped, conformed equipment inventory table."
     columns:
@@ -71,7 +71,7 @@ models:
               values: [pass, soft_violation_future_acquisition, soft_violation_assignment_before_acquisition]
               severity: warn
 
-  - name: mart_equipment_condition_summary
+  - name: gold_agg_equipment_condition_summary
     tags: [gold, rd_equipment_inventory]
     description: "Equipment count/value by agency, category, and condition status."
     columns:

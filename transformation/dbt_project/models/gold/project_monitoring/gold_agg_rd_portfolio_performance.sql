@@ -1,13 +1,14 @@
 {{
   config(
     materialized='table',
+    alias='agg_rd_portfolio_performance',
     tags=['gold', 'project_monitoring']
   )
 }}
 
 -- Gold: use-case-specific curation for the R&D Portfolio Performance Dashboard.
 with silver as (
-    select * from {{ ref('stg_project_monitoring') }}
+    select * from {{ ref('silver_project_monitoring') }}
 ),
 
 by_quarter as (

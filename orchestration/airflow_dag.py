@@ -294,13 +294,19 @@ def _make_ingest_db(dataset: str, source_id: str):
 
 
 def _make_register_metadata(dataset: str, agency: str, stage: str, lineage: list[str],
-                             include_validation_result: bool = True):
+                             include_validation_result: bool = True, dataset_table: str | None = None):
     """Emit metadata at a completed pipeline boundary.
 
     include_validation_result=False is for the "raw_ingested" stage, which
     fires before trigger_gx_validation has even run — pulling its xcom at
     that point would misleadingly read as a validation failure (no result
-    yet, not a bad one)."""
+    yet, not a bad one).
+
+    dataset_table: the physical table name to register, when it differs
+    from `dataset` — Gold aggregates (e.g. "agg_rd_portfolio_performance")
+    aren't 1:1 with the dataset's own name the way bronze/silver are, so
+    the "gold" stage call must pass it explicitly or DataHub's URN would
+    point at a table that doesn't exist. See metadata/datahub_emit.py."""
     def _register(**context):
         import sys
         sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -332,11 +338,15 @@ def _make_register_metadata(dataset: str, agency: str, stage: str, lineage: list
 
         emit_dataset_metadata(
             dataset=dataset,
+            dataset_table=dataset_table,
             owner=f"{agency} M&E unit",
             classification="Project & Knowledge Management",
             schema_ref=schema_ref,
             stage=stage,
             lineage=lineage,
+            # Gold's actual columns are an aggregation, not the canonical
+            # schema — no directly-corresponding field list to hand DataHub.
+            fields=None if stage == "gold" else config.get("canonical_schema", {}).get("fields"),
             data_quality_index=dqi,
             rule_results_summary=rule_summary,
         )
@@ -368,11 +378,18 @@ def build_dag(dataset: str, start_date: datetime, schedule_interval: str,
               cdc_source_id: str | None = None,
               file_folder: str | None = None,
               file_pattern: str | None = None,
-              db_source_id: str | None = None) -> DAG:
+              db_source_id: str | None = None,
+              gold_table: str | None = None) -> DAG:
     """Every ingestion channel is optional — a dataset declares whichever
     combination it actually has in dataset_registry.yaml (project_monitoring
     uses all of api/file/cdc; rd_equipment_inventory uses only db_source_id).
-    At least one must be set, or there's nothing to ingest."""
+    At least one must be set, or there's nothing to ingest.
+
+    gold_table: the physical Gold table name registered in DataHub for this
+    dataset's "gold" stage — Gold aggregates aren't 1:1 with `dataset`'s own
+    name (see _make_register_metadata). Defaults to `dataset` if unset,
+    which is only correct for a dataset whose Gold table happens to share
+    that name."""
     kafka_topic = f"gates.ingestion.{dataset}"
 
     default_args = {**DEFAULT_ARGS_BASE, "on_failure_callback": alert_and_dead_letter}
@@ -515,7 +532,8 @@ def build_dag(dataset: str, start_date: datetime, schedule_interval: str,
         register_transformation_metadata = PythonOperator(
             task_id="register_transformation_metadata",
             python_callable=_make_register_metadata(
-                dataset, agency, "gold", ["staging", "bronze", "silver", "gold"]
+                dataset, agency, "gold", ["staging", "bronze", "silver", "gold"],
+                dataset_table=gold_table or dataset,
             ),
         )
         chain_point >> register_transformation_metadata
@@ -548,4 +566,5 @@ for _entry in _registry["datasets"]:
         file_folder=_entry.get("file_folder"),
         file_pattern=_entry.get("file_pattern"),
         db_source_id=_entry.get("db_source_id"),
+        gold_table=_entry.get("gold_table"),
     )

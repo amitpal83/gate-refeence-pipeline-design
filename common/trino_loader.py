@@ -1,6 +1,6 @@
 """Load GX-validated ingestion batches into a real Iceberg staging table via Trino.
 
-Staging lives in the same `iceberg`/Nessie catalog dbt already targets for
+Staging lives in the same `gates`/Nessie catalog dbt already targets for
 bronze/silver/gold (see transformation/dbt_project/profiles.yml), in its own
 `staging` schema — no second catalog or Hive Metastore is needed. This is
 what makes "store data in MinIO + Iceberg" and "hard checks gate what
@@ -22,6 +22,10 @@ TECHNICAL_COLUMNS = ("_gx_validation_status", "_source_id", "_batch_id", "_inges
 INSERT_CHUNK_SIZE = 500
 
 
+def _catalog() -> str:
+    return os.getenv("TRINO_CATALOG", "gates")
+
+
 def _connect():
     import trino
 
@@ -29,7 +33,7 @@ def _connect():
         host=os.getenv("TRINO_HOST", "trino"),
         port=int(os.getenv("TRINO_PORT", "8080")),
         user=os.getenv("TRINO_USER", "gates_svc_loader"),
-        catalog=os.getenv("TRINO_CATALOG", "iceberg"),
+        catalog=_catalog(),
         schema="staging",
         http_scheme="http",
     )
@@ -42,11 +46,12 @@ def _sql_literal(value: Any) -> str:
 
 
 def ensure_staging_table(dataset: str, canonical_fields: list[dict]) -> str:
-    """Idempotently create iceberg.staging.{dataset}_raw.
+    """Idempotently create {catalog}.staging.{dataset}_raw.
 
     Every column is VARCHAR — Bronze's own CAST(...) does the typing,
     matching what ingestion actually writes (loosely-typed CSV output).
     """
+    catalog = _catalog()
     table = f"{dataset}_raw"
     columns = [field["name"] for field in canonical_fields] + list(TECHNICAL_COLUMNS)
     column_defs = ",\n        ".join(f'"{name}" VARCHAR' for name in columns)
@@ -54,17 +59,17 @@ def ensure_staging_table(dataset: str, canonical_fields: list[dict]) -> str:
     conn = _connect()
     try:
         cur = conn.cursor()
-        cur.execute("CREATE SCHEMA IF NOT EXISTS iceberg.staging")
+        cur.execute(f"CREATE SCHEMA IF NOT EXISTS {catalog}.staging")
         cur.fetchall()
         cur.execute(
-            f'CREATE TABLE IF NOT EXISTS iceberg.staging."{table}" (\n'
+            f'CREATE TABLE IF NOT EXISTS {catalog}.staging."{table}" (\n'
             f"        {column_defs}\n"
             f"    ) WITH (format = 'PARQUET')"
         )
         cur.fetchall()
     finally:
         conn.close()
-    return f'iceberg.staging."{table}"'
+    return f'{catalog}.staging."{table}"'
 
 
 def load_validated_batch(dataset: str, df: pd.DataFrame, canonical_fields: list[dict],

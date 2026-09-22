@@ -3,13 +3,13 @@
 --
 -- This used to be a one-time, manually-run Hive-external-table DDL. It
 -- assumed a Hive Metastore-backed catalog that was never actually part of
--- the stack (Trino here only has the `iceberg` catalog, backed by Nessie —
--- see deployment/trino/etc/catalog/iceberg.properties), so the DDL below
+-- the stack (Trino here only has the `gates` catalog, backed by Nessie —
+-- see deployment/trino/etc/catalog/gates.properties), so the DDL below
 -- would never have worked as written, and nothing ever populated the
 -- `_gx_validation_status` column it filtered on.
 --
 -- The real staging table is now a native Iceberg table in the same
--- `iceberg` catalog dbt already uses (iceberg.staging.{dataset}_raw),
+-- `gates` catalog dbt already uses (gates.staging.{dataset}_raw),
 -- created and populated idempotently by common/trino_loader.py
 -- (ensure_staging_table / load_validated_batch), called from the
 -- promote_to_staging Airflow task in orchestration/airflow_dag.py right

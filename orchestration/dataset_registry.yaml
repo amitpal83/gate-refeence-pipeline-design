@@ -18,6 +18,11 @@ datasets:
     # all three — a dataset with no meaningful Silver transformation could
     # declare dbt_layers: [bronze, gold] instead, with no code changes.
     dbt_layers: [bronze, silver, gold]
+    # The physical Gold table's alias (see
+    # models/gold/project_monitoring/gold_agg_rd_portfolio_performance.sql)
+    # — Gold is a use-case aggregate, not a 1:1 promotion of `dataset`, so
+    # DataHub's "gold" stage registration needs the real name explicitly.
+    gold_table: agg_rd_portfolio_performance
 
   # Second reference dataset — deliberately has NO config/schema_*.yaml
   # file. Its schema, source, field mappings, and validation rules all live
@@ -32,3 +37,4 @@ datasets:
     db_source_id: pcaarrd_equipment_registry_db
     agency: PCAARRD
     dbt_layers: [bronze, silver, gold]
+    gold_table: agg_equipment_condition_summary
