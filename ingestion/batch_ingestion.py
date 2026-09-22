@@ -178,6 +178,14 @@ class BatchIngestor:
                     .drop_duplicates(subset=unique_fields, keep="last")
                     .reset_index(drop=True)
                 )
+            # A delete's "latest event for its key" is the delete itself —
+            # unlike an update, there's no competing later event for the
+            # dedup above to pick instead, so it survives as a near-empty
+            # row (Debezium's delete tombstone/before-image only carries
+            # the primary key). The canonical table models current state,
+            # so a deleted key shouldn't appear in it at all.
+            if "_cdc_operation" in canonical.columns:
+                canonical = canonical[~canonical["_cdc_operation"].isin(["d", "delete"])].reset_index(drop=True)
         for field in get_canonical_fields(config):
             if field.get("dtype") == "date" and field["name"] in canonical.columns:
                 canonical[field["name"]] = self._decode_debezium_dates(canonical[field["name"]])
