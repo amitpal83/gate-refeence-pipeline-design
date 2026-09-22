@@ -24,7 +24,10 @@ COPY requirements.txt /tmp/gates-requirements.txt
 # version its own install step needs wins the final environment.
 RUN pip install --no-cache-dir $(grep -E '^(pandas|pyyaml|requests|openpyxl|confluent-kafka|sqlalchemy|psycopg2-binary|pyarrow|trino)[>=<]' /tmp/gates-requirements.txt)
 RUN pip install --no-cache-dir $(grep -E '^great-expectations[>=<]' /tmp/gates-requirements.txt)
-RUN pip install --no-cache-dir $(grep -E '^acryl-datahub[>=<]' /tmp/gates-requirements.txt)
+# Not "^acryl-datahub[>=<]" — that character class stops matching the
+# moment the line gains an extras marker like "[dbt]" right after the
+# package name, silently installing nothing instead of failing loudly.
+RUN pip install --no-cache-dir $(grep -E '^acryl-datahub(\[|[>=<])' /tmp/gates-requirements.txt)
 RUN pip install --no-cache-dir $(grep -E '^airbyte-cdk[>=<]' /tmp/gates-requirements.txt)
 RUN pip install --no-cache-dir $(grep -E '^(dbt-core|dbt-trino)[>=<]' /tmp/gates-requirements.txt)
 # Installed LAST, after every other stage, so it wins regardless of which

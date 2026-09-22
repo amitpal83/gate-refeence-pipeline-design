@@ -15,7 +15,12 @@ trino>=0.328,<1
 great-expectations>=0.18,<1
 dbt-core>=1.8,<2
 dbt-trino>=1.8,<2
-acryl-datahub>=0.14,<1
+# The bare package disables its "dbt" ingestion source at runtime — it
+# needs the [dbt] extra (pulls in patchy, used by DataHub's sqlglot-based
+# SQL lineage parser) or `datahub ingest` fails with "dbt is disabled due
+# to a missing dependency: patchy" the moment it's actually invoked
+# (orchestration/airflow_dag.py's register_dbt_lineage task).
+acryl-datahub[dbt]>=0.14,<1
 airbyte-cdk>=6,<8
 # great-expectations pulls in boto3/botocore, whose optional urllib3 pyOpenSSL
 # integration breaks against a modern `cryptography` (removed legacy bindings
