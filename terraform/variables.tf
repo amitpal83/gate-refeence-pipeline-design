@@ -23,21 +23,33 @@ variable "vpc_cidr" {
 }
 
 variable "allowed_ssh_cidr" {
-  description = "Your public IP in CIDR notation, for example 203.0.113.10/32."
+  description = <<-EOT
+    TEMPORARY debugging fallback — re-added because SSM Session Manager
+    wasn't registering on the first launch attempt and there was no way to
+    diagnose why without a shell. Set to "" to remove the SSH ingress rule
+    again entirely (recommended once SSM is confirmed working) — leaving it
+    set keeps port 22 open to this CIDR indefinitely.
+  EOT
   type        = string
+  default     = ""
 }
 
 variable "allowed_demo_cidr" {
   description = <<-EOT
     CIDR range allowed direct browser access to the demo UIs (Airflow 8080,
-    Trino 8081, Kafka UI 8082, MinIO console 9001, DataHub frontend 9002),
-    so the team can watch the pipeline run without each person tunneling
-    over SSH. Scope this to the presenter's IP or the venue/office network
-    range for the demo window — never 0.0.0.0/0. Defaults to
-    allowed_ssh_cidr if not set separately.
+    Trino 8081, Kafka UI 8082, MinIO console 9001, DataHub frontend 9002).
+    Set to "0.0.0.0/0" to make these UIs reachable from anywhere on the
+    internet — deliberately chosen for this deployment so remote viewers
+    don't need a CIDR-scoped range. These are demo-grade services with
+    simple credentials, not hardened for open-ended internet exposure, so
+    tighten this back down (or terraform destroy) once the demo is over.
   EOT
   type        = string
-  default     = ""
+
+  validation {
+    condition     = var.allowed_demo_cidr != ""
+    error_message = "allowed_demo_cidr must be set — use \"0.0.0.0/0\" for open internet access, or scope it to a specific CIDR."
+  }
 }
 
 variable "instance_type" {
@@ -76,6 +88,12 @@ variable "backup_bucket_name" {
 }
 
 variable "ssh_key_name" {
-  description = "Existing EC2 key pair name."
+  description = <<-EOT
+    Optional existing EC2 key pair name. Not required — admin access goes
+    through SSM Session Manager (no SSH ingress rule exists at all), so
+    leave this "" unless you specifically want a key pair attached as a
+    fallback (it has no effect unless you also open port 22 yourself).
+  EOT
   type        = string
+  default     = ""
 }

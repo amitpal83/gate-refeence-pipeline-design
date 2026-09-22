@@ -1,12 +1,17 @@
 aws_region        = "us-east-1"
 project_name      = "gates-demo"
 environment       = "demo"
-allowed_ssh_cidr  = "203.0.113.10/32"
 # Who can open the demo UIs directly in a browser (Airflow/Trino/Kafka UI/
-# MinIO/DataHub) without an SSH tunnel. Set to the venue/office network
-# range for the demo window; defaults to allowed_ssh_cidr if left unset.
-allowed_demo_cidr = "203.0.113.0/24"
-ssh_key_name      = "gates-demo-key"
+# MinIO/DataHub). "0.0.0.0/0" makes them reachable from anywhere on the
+# internet — fine for a remote-viewer demo, but these are demo-grade
+# credentials, not hardened for open-ended exposure, so tighten this back
+# down (or terraform destroy) once the demo is over. There's no SSH
+# ingress rule — admin access goes through SSM Session Manager
+# (IAM-gated, not CIDR-gated) unless allowed_ssh_cidr is also set.
+allowed_demo_cidr = "0.0.0.0/0"
+# Optional — SSM Session Manager doesn't need an EC2 key pair at all.
+# Leave "" unless you specifically want one attached.
+ssh_key_name      = ""
 instance_type     = "m6i.2xlarge"
 root_volume_size_gb = 80
 data_volume_size_gb = 400

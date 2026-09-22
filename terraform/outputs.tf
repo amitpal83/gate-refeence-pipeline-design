@@ -19,9 +19,9 @@ output "demo_ui_urls" {
   }
 }
 
-output "ssh_tunnel_command" {
-  description = "Fallback for anyone outside allowed_demo_cidr, or for solo debugging."
-  value = "ssh -i <key.pem> -L 8080:localhost:8080 -L 9002:localhost:9002 -L 8081:localhost:8081 -L 9001:localhost:9001 -L 8082:localhost:8082 ec2-user@${aws_instance.platform.public_ip}"
+output "ssm_session_command" {
+  description = "Shell access via AWS Systems Manager — no SSH, no IP-based security-group rule, gated by your AWS IAM permissions instead. Requires the Session Manager plugin installed locally."
+  value       = "aws ssm start-session --target ${aws_instance.platform.id} --region ${var.aws_region}"
 }
 
 output "backup_bucket" {

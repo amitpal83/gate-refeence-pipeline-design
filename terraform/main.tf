@@ -1,7 +1,3 @@
-locals {
-  demo_cidr = var.allowed_demo_cidr != "" ? var.allowed_demo_cidr : var.allowed_ssh_cidr
-}
-
 data "aws_ami" "amazon_linux" {
   most_recent = true
   owners      = ["amazon"]
@@ -54,15 +50,24 @@ resource "aws_route_table_association" "public" {
 
 resource "aws_security_group" "platform" {
   name        = "${var.project_name}-platform"
-  description = "Private GATES services with SSH tunnel access."
+  description = "Private GATES services; admin access via SSM Session Manager, not SSH."
   vpc_id      = aws_vpc.demo.id
 
-  ingress {
-    description = "SSH administration"
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = [var.allowed_ssh_cidr]
+  # TEMPORARY: SSH re-added as a debugging fallback while SSM Session
+  # Manager registration is being diagnosed — see allowed_ssh_cidr's
+  # description. Remove by setting allowed_ssh_cidr = "" once SSM is
+  # confirmed working; admin access is meant to go through
+  # `aws ssm start-session --target <instance-id>` instead, gated by IAM
+  # permissions rather than a CIDR that breaks every time your IP changes.
+  dynamic "ingress" {
+    for_each = var.allowed_ssh_cidr != "" ? [1] : []
+    content {
+      description = "TEMPORARY SSH debugging access"
+      from_port   = 22
+      to_port     = 22
+      protocol    = "tcp"
+      cidr_blocks = [var.allowed_ssh_cidr]
+    }
   }
 
   ingress {
@@ -74,11 +79,13 @@ resource "aws_security_group" "platform" {
   }
 
   # Direct browser access to the demo UIs — Airflow, Trino, Kafka UI, MinIO
-  # console, DataHub frontend — for the team demo, so no one needs an SSH
-  # tunnel just to watch the pipeline run. Scoped to allowed_demo_cidr
-  # (defaults to allowed_ssh_cidr), never open to 0.0.0.0/0. Each service
-  # still sits behind its own login. Tighten this back down (or
-  # terraform destroy) once the demo is over.
+  # console, DataHub frontend — for the team demo. This is plain HTTP, so
+  # unlike SSH it can't be routed through SSM — it still needs a CIDR-scoped
+  # rule. allowed_demo_cidr is set to 0.0.0.0/0 (open internet) so remote
+  # viewers can reach it without a CIDR. Each service still sits behind its
+  # own login, but these are demo-grade credentials, not hardened for
+  # open-ended exposure — tighten this back down (or terraform destroy)
+  # once the demo is over.
   dynamic "ingress" {
     for_each = toset([8080, 8081, 8082, 9001, 9002])
     content {
@@ -86,7 +93,7 @@ resource "aws_security_group" "platform" {
       from_port   = ingress.value
       to_port     = ingress.value
       protocol    = "tcp"
-      cidr_blocks = [local.demo_cidr]
+      cidr_blocks = [var.allowed_demo_cidr]
     }
   }
 
@@ -141,7 +148,7 @@ resource "aws_instance" "platform" {
   instance_type               = var.instance_type
   subnet_id                   = aws_subnet.public.id
   vpc_security_group_ids      = [aws_security_group.platform.id]
-  key_name                    = var.ssh_key_name
+  key_name                    = var.ssh_key_name != "" ? var.ssh_key_name : null
   iam_instance_profile        = aws_iam_instance_profile.platform.name
   associate_public_ip_address = true
   user_data_replace_on_change = true
@@ -159,6 +166,18 @@ resource "aws_instance" "platform" {
 
   tags = {
     Name = "${var.project_name}-platform"
+  }
+
+  # data.aws_ami.amazon_linux tracks the newest AL2023 AMI at plan time, and
+  # user_data_replace_on_change is set above — together those would silently
+  # destroy and recreate this instance (losing the root volume's cloned repo
+  # and .env) on every apply where AWS has published a newer AMI or this
+  # script has drifted from what's live, even when the only intended change
+  # is something unrelated like a security-group rule. Ignore both here;
+  # ami/user_data changes only take effect on the next apply that happens to
+  # also replace the instance for another reason, not automatically.
+  lifecycle {
+    ignore_changes = [ami, user_data]
   }
 }
 

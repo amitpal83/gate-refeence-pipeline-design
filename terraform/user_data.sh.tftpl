@@ -2,8 +2,18 @@
 set -euo pipefail
 
 dnf update -y
-dnf install -y docker xfsprogs amazon-cloudwatch-agent git curl
+# NOTE: deliberately not installing "curl" here — Amazon Linux 2023 ships
+# curl-minimal by default, which conflicts with the full curl package and
+# fails this entire dnf transaction atomically (silently skipping
+# docker/git/xfsprogs/amazon-cloudwatch-agent too, since a failed dnf
+# transaction installs nothing at all). curl-minimal already provides the
+# `curl` binary this script and docker-compose's install step both need.
+dnf install -y docker xfsprogs amazon-cloudwatch-agent git
 systemctl enable --now docker
+# The gates-demo.service unit runs as ec2-user (not root), so it needs
+# group membership on the docker socket — without this, "docker compose
+# up" fails immediately with "permission denied ... docker.sock".
+usermod -aG docker ec2-user
 
 mkdir -p /usr/local/lib/docker/cli-plugins
 curl -fsSL https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-linux-x86_64 \
