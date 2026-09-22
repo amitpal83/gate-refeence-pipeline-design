@@ -31,16 +31,22 @@ def _emit_via_real_datahub(metadata: dict) -> bool:
         `owner` string (e.g. "PCHRD M&E unit" -> "pchrd_m&e_unit"). In a
         real deployment this should instead reference a corpGroup/corpuser
         URN that already exists in DataHub, not a slug guessed here.
-      - Lineage entries are turned into dataset URNs on a generic "gates"
-        platform, since staging/bronze aren't necessarily registered as
-        their own DataHub datasets on a recognized platform.
+      - Lineage is NOT emitted here — DataHub's own dbt ingestion source
+        (see metadata/datahub_dbt_ingestion_recipe.yml, run by the
+        register_dbt_lineage task after every dbt_test in
+        orchestration/airflow_dag.py) derives the full bronze->silver->gold
+        lineage graph automatically from dbt's manifest/catalog artifacts.
+        DataHub's own docs warn against also hand-writing lineage edges
+        alongside an automated source — the two can conflict — so this
+        emitter is scoped to what dbt's artifacts can't express at all:
+        this run's actual data-quality score, hard-rule pass/fail, and
+        ownership/classification.
     """
     from datahub.emitter.mcp import MetadataChangeProposalWrapper
     from datahub.emitter.rest_emitter import DatahubRestEmitter
     from datahub.metadata.schema_classes import (
         DatasetPropertiesClass, GlobalTagsClass, TagAssociationClass,
         OwnershipClass, OwnerClass, OwnershipTypeClass,
-        UpstreamLineageClass, UpstreamClass, DatasetLineageTypeClass,
         SchemaMetadataClass, SchemaFieldClass, SchemaFieldDataTypeClass,
         OtherSchemaClass, StringTypeClass, NumberTypeClass, DateTypeClass, BooleanTypeClass,
     )
@@ -131,25 +137,11 @@ def _emit_via_real_datahub(metadata: dict) -> bool:
             ),
         ))
 
-    # --- Aspect 5: UpstreamLineage ---
-    if metadata["lineage"]:
-        upstreams = [
-            UpstreamClass(
-                dataset=f"urn:li:dataset:(urn:li:dataPlatform:gates,{node},{env})",
-                type=DatasetLineageTypeClass.TRANSFORMED,
-            )
-            for node in metadata["lineage"]
-        ]
-        emitter.emit(MetadataChangeProposalWrapper(
-            entityUrn=dataset_urn,
-            aspect=UpstreamLineageClass(upstreams=upstreams),
-        ))
-
     return True
 
 
 def emit_dataset_metadata(dataset: str, owner: str, classification: str,
-                           schema_ref: str, lineage: list[str],
+                           schema_ref: str,
                            data_quality_index: float, rule_results_summary: dict,
                            stage: str = "bronze", dataset_table: str | None = None,
                            fields: list[dict] | None = None) -> dict:
@@ -157,7 +149,9 @@ def emit_dataset_metadata(dataset: str, owner: str, classification: str,
     (Gold aggregates are named for their use case, not the source entity —
     see _emit_via_real_datahub's docstring). fields: canonical_schema.fields
     from ConfigRegistry, used to populate the DataHub Schema tab; omit for
-    stages with no directly-corresponding field list."""
+    stages with no directly-corresponding field list. No `lineage` param —
+    see _emit_via_real_datahub's docstring for why lineage comes from
+    DataHub's dbt ingestion source instead of being hand-written here."""
     metadata = {
         "dataset": dataset,
         "dataset_table": dataset_table,
@@ -165,7 +159,6 @@ def emit_dataset_metadata(dataset: str, owner: str, classification: str,
         "classification": classification,
         "schema_ref": schema_ref,
         "stage": stage,
-        "lineage": lineage,
         "fields": fields,
         "data_quality_index": data_quality_index,
         "rule_results_summary": rule_results_summary,
@@ -182,7 +175,6 @@ if __name__ == "__main__":
         classification="Project & Knowledge Management",
         schema_ref="schema_project_monitoring.yaml",
         stage="bronze",
-        lineage=["dost_pms_api", "pchrd_regional_file_dropbox", "staging", "bronze"],
         data_quality_index=91.7,
         rule_results_summary={"hard_pass": True, "soft_flags": 1},
     )

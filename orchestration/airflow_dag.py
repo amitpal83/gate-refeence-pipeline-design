@@ -11,9 +11,13 @@ adding a block to dataset_registry.yaml, never editing this file.
 Per-DAG task chain:
     (whichever of ingest_api / ingest_file / ingest_cdc / ingest_db a
     dataset actually declares in dataset_registry.yaml, run in parallel)
-        -> publish_to_kafka -> trigger_gx_validation -> promote_to_staging
-        -> register_bronze_metadata -> dbt_run_bronze -> dbt_run_silver -> dbt_run_gold
-        -> register_transformation_metadata
+        -> publish_to_kafka -> register_ingestion_metadata -> trigger_gx_validation
+        -> promote_to_staging -> dbt_run_bronze -> dbt_test_bronze -> register_bronze_metadata
+        -> dbt_run_silver -> dbt_test_silver -> register_silver_metadata
+        -> dbt_run_gold -> dbt_test_gold -> register_gold_metadata -> register_dbt_lineage
+        -> finish_job
+    (each register_<layer>_metadata is a side-branch off that layer's
+    dbt_test, not a gate on the next layer's dbt_run — see build_dag())
 
 Not every dataset has all four ingestion channels — project_monitoring uses
 api+file+cdc; rd_equipment_inventory (a database-only-config dataset) uses
@@ -293,9 +297,15 @@ def _make_ingest_db(dataset: str, source_id: str):
     return _ingest
 
 
-def _make_register_metadata(dataset: str, agency: str, stage: str, lineage: list[str],
+def _make_register_metadata(dataset: str, agency: str, stage: str,
                              include_validation_result: bool = True, dataset_table: str | None = None):
-    """Emit metadata at a completed pipeline boundary.
+    """Emit metadata at a completed pipeline boundary — DQI, hard-rule
+    pass/fail, ownership, classification, and (when available) a column
+    list. Deliberately doesn't emit lineage: DataHub's own dbt ingestion
+    source (register_dbt_lineage, elsewhere in build_dag) derives the full
+    bronze->silver->gold graph from dbt's own artifacts, which DataHub's
+    docs recommend over hand-written lineage edges that can drift out of
+    sync or conflict with the automated source.
 
     include_validation_result=False is for the "raw_ingested" stage, which
     fires before trigger_gx_validation has even run — pulling its xcom at
@@ -343,7 +353,6 @@ def _make_register_metadata(dataset: str, agency: str, stage: str, lineage: list
             classification="Project & Knowledge Management",
             schema_ref=schema_ref,
             stage=stage,
-            lineage=lineage,
             # Gold's actual columns are an aggregation, not the canonical
             # schema — no directly-corresponding field list to hand DataHub.
             fields=None if stage == "gold" else config.get("canonical_schema", {}).get("fields"),
@@ -463,10 +472,14 @@ def build_dag(dataset: str, start_date: datetime, schedule_interval: str,
         # Registers the raw/ingested dataset in DataHub even before
         # validation runs, so it's searchable/catalogued from the moment
         # data lands — not only once it's reached bronze or gold.
+        # dataset_table matches trino_loader.ensure_staging_table()'s real
+        # naming ("{dataset}_raw") — the bare dataset name alone was
+        # pointing this URN at a table that doesn't exist.
         register_ingestion_metadata = PythonOperator(
             task_id="register_ingestion_metadata",
             python_callable=_make_register_metadata(
-                dataset, agency, "raw_ingested", ["staging"], include_validation_result=False,
+                dataset, agency, "raw_ingested",
+                include_validation_result=False, dataset_table=f"{dataset}_raw",
             ),
         )
 
@@ -480,11 +493,6 @@ def build_dag(dataset: str, start_date: datetime, schedule_interval: str,
             python_callable=_make_promote_to_staging(dataset),
         )
         validate >> promote_to_staging
-
-        register_bronze_metadata = PythonOperator(
-            task_id="register_bronze_metadata",
-            python_callable=_make_register_metadata(dataset, agency, "bronze", ["staging", "bronze"]),
-        )
 
         # Previously: three separately hardcoded BashOperators
         # (dbt_bronze/dbt_silver/dbt_gold), with the layer names, task_ids,
@@ -521,22 +529,47 @@ def build_dag(dataset: str, start_date: datetime, schedule_interval: str,
             for layer in dbt_layers
         ]
 
+        # Register at every layer, not just bronze/gold — a data catalog
+        # tracking a medallion pipeline is expected to checkpoint lineage
+        # AND business metadata (DQI, ownership) at each bronze->silver->
+        # gold hop, not only the final one. Each register_<layer>_metadata
+        # task is a side-branch off that layer's dbt_test (it doesn't gate
+        # the next layer's dbt_run — a slow/flaky DataHub call shouldn't
+        # stall the transformation chain), but it does gate finish_job
+        # below so a registration failure is still visible as a run
+        # failure, not silently swallowed.
         chain_point = promote_to_staging
-        for dbt_task, dbt_test in zip(dbt_tasks, dbt_test_tasks):
+        register_tasks = []
+        for layer, dbt_task, dbt_test in zip(dbt_layers, dbt_tasks, dbt_test_tasks):
             chain_point >> dbt_task >> dbt_test
             chain_point = dbt_test
-            if dbt_task is dbt_tasks[0]:
-                promote_to_staging >> dbt_task
-        dbt_tasks[0] >> register_bronze_metadata >> dbt_test_tasks[0]
 
-        register_transformation_metadata = PythonOperator(
-            task_id="register_transformation_metadata",
-            python_callable=_make_register_metadata(
-                dataset, agency, "gold", ["staging", "bronze", "silver", "gold"],
-                dataset_table=gold_table or dataset,
+            register_layer_metadata = PythonOperator(
+                task_id=f"register_{layer}_metadata",
+                python_callable=_make_register_metadata(
+                    dataset, agency, layer,
+                    dataset_table=(gold_table or dataset) if layer == "gold" else dataset,
+                ),
+            )
+            dbt_test >> register_layer_metadata
+            register_tasks.append(register_layer_metadata)
+
+        # Lineage (every bronze->silver->gold ref() edge, column-level)
+        # comes from DataHub's own dbt ingestion source reading this run's
+        # manifest/catalog artifacts, not from hand-written edges — see
+        # metadata/datahub_dbt_ingestion_recipe.yml and
+        # _make_register_metadata's docstring for why. `dbt docs generate`
+        # produces catalog.json (real column types from the warehouse);
+        # a plain `dbt run` only produces manifest.json.
+        register_dbt_lineage = BashOperator(
+            task_id="register_dbt_lineage",
+            bash_command=(
+                "dbt docs generate --project-dir /opt/airflow/dags/transformation/dbt_project "
+                "--profiles-dir /opt/airflow/dags/transformation/dbt_project && "
+                "datahub ingest -c /opt/airflow/dags/metadata/datahub_dbt_ingestion_recipe.yml"
             ),
         )
-        chain_point >> register_transformation_metadata
+        chain_point >> register_dbt_lineage
 
         start_job >> ingestion_tasks >> publish_event >> register_ingestion_metadata >> validate
 
@@ -545,7 +578,7 @@ def build_dag(dataset: str, start_date: datetime, schedule_interval: str,
             python_callable=_make_finish_job(dataset),
             trigger_rule=TriggerRule.ALL_SUCCESS,
         )
-        register_transformation_metadata >> finish_job
+        [*register_tasks, register_dbt_lineage] >> finish_job
 
     return dag
 

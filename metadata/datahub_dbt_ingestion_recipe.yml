@@ -1,0 +1,30 @@
+# DataHub's built-in dbt ingestion source — derives the full bronze->
+# silver->gold lineage graph (every ref() edge, column-level where
+# catalog.json has types) directly from this run's dbt artifacts, instead
+# of anyone hand-writing lineage edges. Run via `datahub ingest -c
+# metadata/datahub_dbt_ingestion_recipe.yml` — see the register_dbt_lineage
+# task in orchestration/airflow_dag.py, which runs `dbt docs generate`
+# (produces catalog.json) immediately before this.
+#
+# target_platform/env here must keep matching metadata/datahub_emit.py's
+# own URN construction (platform="trino", env="PROD") — both write
+# aspects onto the SAME dataset URNs (DataHub merges aspects per URN by
+# design), so a mismatch here would silently create a second, empty set
+# of duplicate datasets instead of enriching the real ones.
+source:
+  type: dbt
+  config:
+    manifest_path: "/opt/airflow/dags/transformation/dbt_project/target/manifest.json"
+    catalog_path: "/opt/airflow/dags/transformation/dbt_project/target/catalog.json"
+    target_platform: trino
+    env: PROD
+    # dbt's own node names (bronze_project_monitoring, silver_project_monitoring,
+    # gold_agg_rd_portfolio_performance, ...) become each dataset's DataHub
+    # description/docs — the target URN itself uses the physical warehouse
+    # table name (dbt's +alias config), which is why it lines up with
+    # metadata/datahub_emit.py's URNs without any extra mapping here.
+
+sink:
+  type: datahub-rest
+  config:
+    server: "http://datahub-gms:8080"
