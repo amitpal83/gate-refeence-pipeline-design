@@ -434,6 +434,15 @@ services:
         condition: service_completed_successfully
     environment:
       DATAHUB_SERVER_TYPE: quickstart
+      # DATAHUB_SERVER_TYPE=quickstart alone does NOT embed the MAE
+      # (Metadata Audit Event) consumer that turns Kafka change-log events
+      # into Elasticsearch search-index updates — without this, every
+      # write reaches MySQL fine but the search index (and Browse) stays
+      # permanently empty, since there's no separate datahub-mae-consumer
+      # container in this compose file either. Confirmed missing: `kafka-
+      # consumer-groups.sh --list` showed no MAE consumer group at all,
+      # only the unrelated usage-event one.
+      MAE_CONSUMER_ENABLED: "true"
       DATAHUB_GMS_PORT: 8080
       EBEAN_DATASOURCE_USERNAME: datahub
       EBEAN_DATASOURCE_PASSWORD: ${DATAHUB_MYSQL_PASSWORD:?Set DATAHUB_MYSQL_PASSWORD in .env}
