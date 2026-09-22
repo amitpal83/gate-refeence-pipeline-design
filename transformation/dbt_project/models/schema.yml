@@ -5,8 +5,13 @@ models:
     tags: [bronze, project_monitoring]
     description: "Typed, partitioned promotion of GX-validated staging data."
     columns:
+      # Bronze is raw/as-is (every validated batch appended, one row per
+      # ingested record) — the same project_id legitimately reappears
+      # across batches/runs. Dedup is Silver's job (see
+      # stg_project_monitoring's own unique test below); enforcing it here
+      # fails on the second ingestion of any project, every time.
       - name: project_id
-        tests: [not_null, unique]
+        tests: [not_null]
       - name: last_updated_at
         tests: [not_null]
       - name: dt
@@ -45,8 +50,10 @@ models:
     tags: [bronze, rd_equipment_inventory]
     description: "Typed, partitioned promotion of GX-validated staging data (DB-only config dataset)."
     columns:
+      # Same reasoning as bronze_project_monitoring above — Bronze is
+      # as-is/appended, dedup happens in stg_rd_equipment_inventory.
       - name: equipment_id
-        tests: [not_null, unique]
+        tests: [not_null]
       - name: last_updated_at
         tests: [not_null]
       - name: dt
