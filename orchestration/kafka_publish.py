@@ -2,7 +2,7 @@
 import json
 from datetime import datetime, timezone
 
-KAFKA_BOOTSTRAP_SERVERS = "kafka-broker:9092"
+KAFKA_BOOTSTRAP_SERVERS = "kafka:29092"
 KAFKA_TOPIC = "gates.ingestion.project_monitoring"
 
 

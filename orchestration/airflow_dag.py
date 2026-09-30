@@ -1,12 +1,9 @@
 """
 airflow_dag.py — DAG FACTORY, not a single hardcoded DAG.
 
-Generates one DAG per entry in dataset_registry.yaml. Nothing dataset-
-specific (name, schedule, start_date, source_ids, agency) is hardcoded
-below — every one of those comes from the registry, exactly the same
-"config drives behavior, code stays generic" principle as
-common/ingestion_framework.py. Adding a new dataset to this pipeline means
-adding a block to dataset_registry.yaml, never editing this file.
+Generates one DAG per entry in dataset_registry.yaml. 
+Dataset specific parameters (name, schedule, start_date, source_ids, agency) comes from the registry common/ingestion_framework.py. 
+Adding a new dataset to this pipeline means adding a block to dataset_registry.yaml, not editing this file.
 
 Per-DAG task chain:
     (whichever of ingest_api / ingest_file / ingest_cdc / ingest_db a
@@ -19,32 +16,13 @@ Per-DAG task chain:
     (each register_<layer>_metadata is a side-branch off that layer's
     dbt_test, not a gate on the next layer's dbt_run — see build_dag())
 
-Not every dataset has all four ingestion channels — project_monitoring uses
-api+file+cdc; rd_equipment_inventory (a database-only-config dataset) uses
-only its db_multitable source. build_dag() treats every channel parameter
-as optional or None skips it — see build_dag()'s ingestion_tasks list.
 
-Two things fixed here versus the earlier single-dataset version:
-  1. register_metadata (DataHub) is now a real task in the chain, placed
-     right after validation as the design doc always specified — it was
-     simply missing before.
-  2. Every dataset-specific string used to be a literal (e.g.
-     "--dataset project_monitoring" baked directly into a bash_command)
-     even in places that ignored the DATASET module constant entirely.
-     Everything below is an f-string built from build_dag()'s parameters.
-
-NOTE ON MIXED FREQUENCIES: a single dataset's two channels may want
-different cadences (e.g. an API source syncing daily, a file source
-arriving quarterly). A single DAG has exactly one schedule_interval for
+A single DAG has exactly one schedule_interval for
 every task in it. This factory takes the simplest approach — schedule at
 the TIGHTEST cadence the dataset needs (set per-dataset in the registry)
 and make ingest_file_navi_gates.py itself a no-op when there's nothing new
-since the last submission_date (not yet implemented — flagged here as a
-real follow-up, not solved). The alternative — splitting API and file
-ingestion into two independently-scheduled DAGs that both feed a shared
-downstream DAG via Airflow Datasets — is cleaner semantically but adds
-real complexity; revisit if a dataset's channels diverge further than
-daily-vs-quarterly.
+since the last submission_date is reached.
+
 """
 from datetime import datetime, timedelta
 import json
@@ -92,7 +70,7 @@ def _make_publish_ingestion_event(dataset: str, kafka_topic: str, manifest_task_
     def _publish(**context):
         from confluent_kafka import Producer
 
-        producer = Producer({"bootstrap.servers": "kafka-broker:9092"})
+        producer = Producer({"bootstrap.servers": "kafka:29092"})
         ti = context["ti"]
         manifest_path = ti.xcom_pull(task_ids=manifest_task_id, key="manifest_path")
         if manifest_path is None:
@@ -126,14 +104,11 @@ def _make_ingest_airbyte(dataset: str, source_id: str, agency: str):
 
 
 def _make_trigger_gx_validation(dataset: str):
-    """Previously: assumed a checkpoint named f"{dataset}_common_checkpoint"
-    already existed somewhere and just ran it by name — nothing in this
-    repo ever explained how that checkpoint would get created, and it never
-    included the custom suite (see validation/gx_common_suite.py's fix).
-    Now: loads this run's staged data directly and calls the same
+    """Loads this run's staged data directly and calls the same
     validation/run_validation.py:validate() function
     uses — one shared implementation, common+custom suites always
     combined, no assumed pre-existing state."""
+    
     def _validate(**context):
         import sys
         import glob
@@ -144,23 +119,11 @@ def _make_trigger_gx_validation(dataset: str):
         from validation.run_validation import validate
 
         # Production note: this glob picks up every staged file for this
-        # dataset regardless of run date/agency partition — the local
-        # harness does the same simplification. A real deployment should
-        # scope this to context["ds"] (the run's logical date) and the
-        # specific agency partition(s) this run just ingested.
+        # dataset 
         staged_paths = glob.glob(
             str(repo_root / "staging" / "**" / dataset / "**" / "raw_*.csv"), recursive=True
         )
-        # Two things the blanket glob above would otherwise get wrong:
-        # 1) it also matches staging/quarantine/** (any path with "dataset"
-        #    as a segment), so every previously-quarantined batch keeps
-        #    getting re-validated and re-quarantined forever.
-        # 2) repeated triggers on the same day create a NEW batch folder
-        #    per source each time (file/API channels don't overwrite), so
-        #    without this every historical batch gets concatenated
-        #    together — the same project_id showing up once per past run,
-        #    always failing uniqueness. Keep only the newest file per
-        #    source_id (from its raw_{source_id}.csv filename).
+        
         staged_paths = [p for p in staged_paths if "quarantine" not in _Path(p).parts]
         latest_by_source: dict[str, str] = {}
         for path in staged_paths:
@@ -279,9 +242,7 @@ def _make_ingest_cdc(dataset: str, source_id: str):
 def _make_ingest_db(dataset: str, source_id: str):
     """Read every table a db_multitable source declares and join them — the
     multi-table-database ingestion path (see
-    ingestion.batch_ingestion.BatchIngestor.ingest_db_tables). Used by
-    rd_equipment_inventory, whose config lives only in the config database
-    (database/init_config_db.sql), not YAML."""
+    ingestion.batch_ingestion.BatchIngestor.ingest_db_tables). """
     def _ingest(**context):
         import sys
         sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -301,22 +262,20 @@ def _make_register_metadata(dataset: str, agency: str, stage: str,
                              include_validation_result: bool = True, dataset_table: str | None = None):
     """Emit metadata at a completed pipeline boundary — DQI, hard-rule
     pass/fail, ownership, classification, and (when available) a column
-    list. Deliberately doesn't emit lineage: DataHub's own dbt ingestion
+    list. 
+    
+    DataHub's own dbt ingestion
     source (register_dbt_lineage, elsewhere in build_dag) derives the full
-    bronze->silver->gold graph from dbt's own artifacts, which DataHub's
-    docs recommend over hand-written lineage edges that can drift out of
-    sync or conflict with the automated source.
+    bronze->silver->gold graph from dbt's own artifacts
 
     include_validation_result=False is for the "raw_ingested" stage, which
     fires before trigger_gx_validation has even run — pulling its xcom at
-    that point would misleadingly read as a validation failure (no result
-    yet, not a bad one).
+    that point would misleadingly read as a validation failure 
 
     dataset_table: the physical table name to register, when it differs
-    from `dataset` — Gold aggregates (e.g. "agg_rd_portfolio_performance")
-    aren't 1:1 with the dataset's own name the way bronze/silver are, so
-    the "gold" stage call must pass it explicitly or DataHub's URN would
-    point at a table that doesn't exist. See metadata/datahub_emit.py."""
+    from `dataset` — Gold aggregates 
+    """
+
     def _register(**context):
         import sys
         sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -334,10 +293,6 @@ def _make_register_metadata(dataset: str, agency: str, stage: str,
             dqi = None
             rule_summary = {"note": "registered at ingestion time, before validation ran"}
 
-        # rd_equipment_inventory has no schema_*.yaml file at all — its
-        # config lives only in the config database — so the DataHub-visible
-        # schema_ref should say so instead of pointing at a file that
-        # doesn't exist. ConfigRegistry tags every resolved config with
         # exactly where it came from.
         repo_root = Path(__file__).resolve().parents[1]
         config = ConfigRegistry(yaml_dir=repo_root / "config").get_dataset(dataset)
@@ -390,13 +345,11 @@ def build_dag(dataset: str, start_date: datetime, schedule_interval: str,
               db_source_id: str | None = None,
               gold_table: str | None = None) -> DAG:
     """Every ingestion channel is optional — a dataset declares whichever
-    combination it actually has in dataset_registry.yaml (project_monitoring
-    uses all of api/file/cdc; rd_equipment_inventory uses only db_source_id).
+    combination it actually has in dataset_registry.yaml 
     At least one must be set, or there's nothing to ingest.
 
     gold_table: the physical Gold table name registered in DataHub for this
-    dataset's "gold" stage — Gold aggregates aren't 1:1 with `dataset`'s own
-    name (see _make_register_metadata). Defaults to `dataset` if unset,
+    dataset's "gold" stage. Defaults to `dataset` if unset,
     which is only correct for a dataset whose Gold table happens to share
     that name."""
     kafka_topic = f"gates.ingestion.{dataset}"
@@ -472,9 +425,7 @@ def build_dag(dataset: str, start_date: datetime, schedule_interval: str,
         # Registers the raw/ingested dataset in DataHub even before
         # validation runs, so it's searchable/catalogued from the moment
         # data lands — not only once it's reached bronze or gold.
-        # dataset_table matches trino_loader.ensure_staging_table()'s real
-        # naming ("{dataset}_raw") — the bare dataset name alone was
-        # pointing this URN at a table that doesn't exist.
+        
         register_ingestion_metadata = PythonOperator(
             task_id="register_ingestion_metadata",
             python_callable=_make_register_metadata(
@@ -494,17 +445,14 @@ def build_dag(dataset: str, start_date: datetime, schedule_interval: str,
         )
         validate >> promote_to_staging
 
-        # Previously: three separately hardcoded BashOperators
-        # (dbt_bronze/dbt_silver/dbt_gold), with the layer names, task_ids,
-        # AND the chain order all fixed in Python — a dataset needing a
-        # different set of layers (no Silver, an extra layer, a different
-        # order) would require editing this function, not just the
-        # registry. Fix: dbt_layers is now a registry-driven list; the
+       
+        # dbt_layers is now a registry-driven list; the
         # chain below is built by looping over it, in whatever order the
         # registry declares. Each model is still tagged with BOTH its layer
         # AND its dataset name (see models/*/*.sql config() blocks) so
         # --select tag:X,tag:Y (an AND) scopes correctly regardless of how
         # many layers a given dataset has.
+        
         dbt_tasks = [
             BashOperator(
                 task_id=f"dbt_run_{layer}",
@@ -529,15 +477,8 @@ def build_dag(dataset: str, start_date: datetime, schedule_interval: str,
             for layer in dbt_layers
         ]
 
-        # Register at every layer, not just bronze/gold — a data catalog
-        # tracking a medallion pipeline is expected to checkpoint lineage
-        # AND business metadata (DQI, ownership) at each bronze->silver->
-        # gold hop, not only the final one. Each register_<layer>_metadata
-        # task is a side-branch off that layer's dbt_test (it doesn't gate
-        # the next layer's dbt_run — a slow/flaky DataHub call shouldn't
-        # stall the transformation chain), but it does gate finish_job
-        # below so a registration failure is still visible as a run
-        # failure, not silently swallowed.
+        # Register at every layer bronze/silver/gold — a data catalog
+       
         chain_point = promote_to_staging
         register_tasks = []
         for layer, dbt_task, dbt_test in zip(dbt_layers, dbt_tasks, dbt_test_tasks):
