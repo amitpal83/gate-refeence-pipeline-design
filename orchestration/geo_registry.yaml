@@ -1,0 +1,11 @@
+# One entry per geo layer. The geo DAG factory (planned step S11) builds one DAG
+# per entry, the same way dataset_registry.yaml drives the existing DAGs.
+# Adding a layer means adding config/geo/<layer>.yaml and an entry here.
+
+layers:
+  - layer: critical_facilities
+    agency: DOST
+    source_folder: sample_data/geo/critical_facilities   # relative to the repo root
+    file_pattern: "*.shp"                                # also accepts .zip and .gpkg drops
+    schedule_interval: "@daily"
+    start_date: "2026-10-01"

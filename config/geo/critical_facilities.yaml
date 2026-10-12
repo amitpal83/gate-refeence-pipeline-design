@@ -1,0 +1,70 @@
+# Layer contract for the critical_facilities vector layer.
+# Loaded and validated by common/geo_config.py. One file per layer.
+
+layer: critical_facilities
+version: "1.0"
+description: Critical facilities (hospitals, schools, government sites) as points, with a contact person per site.
+
+geometry_type: Point            # Point | LineString | Polygon (Multi* only if allow_multi: true)
+allow_multi: false
+
+# POC: WGS 84 only. If the shapefile has no .prj, source_crs is used. If the
+# .prj declares a different CRS the batch fails; nothing is reprojected silently.
+source_crs: EPSG:4326
+target_crs: EPSG:4326
+
+# min_lon, min_lat, max_lon, max_lat. Catches swapped latitude and longitude.
+bbox_ph: [116.9, 4.5, 126.7, 21.2]
+
+unique_key: facility_id
+encoding: utf-8                 # set to cp1252 if the DBF is not UTF-8
+
+# DBF column names are limited to 10 characters, so agencies' files arrive
+# truncated or oddly spelled. Source name (matched ignoring case) -> canonical name.
+field_aliases:
+  facity_Id: facility_id
+  facility_t: facility_type
+  contact_pe: contact_person
+  contact_ph: contact_phone
+  contact_em: contact_email
+
+attributes:
+  - {name: facility_id, required: true}
+  - {name: name, required: true}
+  - {name: facility_type, required: true, permissible_values: [government, hospital, school]}
+  - {name: address, required: false}
+  - {name: contact_person, required: false}
+  - {name: contact_phone, required: false}
+  - {name: contact_email, required: false}
+  - {name: remarks, required: false}
+
+thresholds:
+  max_null_geom_pct: 0          # features without a usable geometry
+  max_repaired_pct: 2           # invalid geometries repaired with make_valid
+
+# PII handling, applied by common/pii_protection.py after validation and before
+# anything is stored. Contact details are kept, encrypted in the vault, and the
+# serving copy holds a pseudonym or masked value.
+pii:
+  scan: all_text
+  score_threshold: 0.4
+  entities: [PERSON, EMAIL_ADDRESS, PHONE_NUMBER, PH_PHONE, PH_PHILSYS, PH_TIN, PH_SSS, PH_GSIS]
+  skip_columns: [name, address]   # facility names and addresses are public data
+  columns:
+    contact_person: {serving: pseudonymize, vault: true}
+    contact_email: {serving: mask, vault: true}
+    contact_phone: {serving: mask_last3, vault: true}
+    remarks: {serving: replace_in_text, vault: true}
+  vault_government_ids: false
+  on_unreachable_key_service: fail
+
+# Used by the GeoServer publisher (planned step S10).
+geoserver:
+  workspace: gates
+  style:
+    attribute: facility_type
+    point_size: 8
+    colors:
+      government: "#1f78b4"
+      hospital: "#e31a1c"
+      school: "#33a02c"
