@@ -38,9 +38,7 @@ def _try_real_great_expectations(df: pd.DataFrame, contract: dict, dataset: str)
 def validate(staged_csv_paths: list[str], config_dir: Path, dataset: str = "project_monitoring") -> dict:
     """`dataset` must name a dataset ConfigRegistry can resolve — either a
     config/schema_{dataset}.yaml file or a row in the config database's
-    dataset_registry table. Callers (the Airflow DAG factory) must always
-    pass the dataset explicitly; the default here only covers ad-hoc/CLI
-    use against the reference dataset."""
+    dataset_registry table. """
     if not staged_csv_paths:
         raise ValueError("No staged files were provided for validation")
     dfs = [pd.read_csv(p, dtype=str, keep_default_na=False, na_values=[""]) for p in staged_csv_paths]
@@ -56,15 +54,7 @@ def validate(staged_csv_paths: list[str], config_dir: Path, dataset: str = "proj
     if unexpected:
         raise ValueError(f"Unexpected staged columns for {dataset}: {sorted(unexpected)}")
     validation_df = df[[column for column in df.columns if column in canonical_fields]]
-    # Every staged CSV is read with dtype=str above (deliberately, to avoid
-    # pandas' own type-inference surprises across sources) — but that means
-    # every column is still a raw string here, including budget/numeric
-    # fields. Left uncast, expect_column_values_to_be_of_type("float64")
-    # always fails (observed type is str), and worse,
-    # expect_column_pair_values_A_to_be_greater_than_B compares them as
-    # STRINGS ('7500000.0' < '900000.0' lexicographically, even though it's
-    # numerically larger) — silently wrong, not just a failed check. Cast
-    # each canonical field to its declared dtype before validating.
+    
     for field in contract["canonical_schema"]["fields"]:
         name = field["name"]
         if name not in validation_df.columns:

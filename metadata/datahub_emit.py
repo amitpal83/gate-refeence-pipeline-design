@@ -9,38 +9,12 @@ def _emit_via_real_datahub(metadata: dict) -> bool:
     """
     Emit typed DataHub aspects through the REST emitter.
 
-    URN/platform choices made here, worth reviewing against your actual
-    DataHub deployment:
+       DataHub deployment:
       - platform="trino", dataset qualified as
         "{TRINO_CATALOG}.{layer_schema}.<table>" — each pipeline stage maps
         directly to its own physical Trino schema (bronze/silver/gold/
-        staging; see transformation/dbt_project/dbt_project.yml's +schema
-        per layer and common/trino_loader.py's staging schema), matching
-        the actual medallion-per-schema layout dbt writes to, not a single
-        flat schema. TRINO_CATALOG defaults to "gates" to match
-        transformation/dbt_project/profiles.yml.
-      - `dataset_table` (physical table name) defaults to `dataset` (the
-        pipeline's dataset key, e.g. "project_monitoring") for
-        bronze/silver, where the table is a 1:1 promotion of that entity —
-        but Gold tables are aggregates with their own names (e.g.
-        "agg_rd_portfolio_performance"), so callers registering a Gold
-        stage must pass the real table name or this URN points at a table
-        that doesn't exist.
-      - env="PROD" — DataHub's FabricType; hardcoded, not parameterized.
-      - Owner is turned into a corpGroup URN by slugifying the free-text
-        `owner` string (e.g. "PCHRD M&E unit" -> "pchrd_m&e_unit"). In a
-        real deployment this should instead reference a corpGroup/corpuser
-        URN that already exists in DataHub, not a slug guessed here.
-      - Lineage is NOT emitted here — DataHub's own dbt ingestion source
-        (see metadata/datahub_dbt_ingestion_recipe.yml, run by the
-        register_dbt_lineage task after every dbt_test in
-        orchestration/airflow_dag.py) derives the full bronze->silver->gold
-        lineage graph automatically from dbt's manifest/catalog artifacts.
-        DataHub's own docs warn against also hand-writing lineage edges
-        alongside an automated source — the two can conflict — so this
-        emitter is scoped to what dbt's artifacts can't express at all:
-        this run's actual data-quality score, hard-rule pass/fail, and
-        ownership/classification.
+        staging; 
+      
     """
     from datahub.emitter.mcp import MetadataChangeProposalWrapper
     from datahub.emitter.rest_emitter import DatahubRestEmitter

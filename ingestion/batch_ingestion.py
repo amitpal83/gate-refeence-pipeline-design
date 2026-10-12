@@ -111,9 +111,7 @@ class BatchIngestor:
         """Read every table a db_multitable source declares straight out of
         the operational database, left-join them on the source's join_key
         into one wide raw frame, and canonicalize — the multi-table-database
-        counterpart to ingest_folder's multi-file-folder case. Reuses
-        apply_aliasing() unchanged: once the tables are merged, it doesn't
-        matter which original table a raw column came from."""
+         """
         import os
 
         from sqlalchemy import create_engine
@@ -148,12 +146,8 @@ class BatchIngestor:
     def _canonicalize(self, raw: pd.DataFrame, config: dict[str, Any], aliases: list[dict[str, Any]], source: dict[str, Any], keep_metadata: bool = False) -> pd.DataFrame:
         canonical = apply_aliasing(raw, aliases) if aliases else identity_pass_through(raw, get_canonical_fields(config))
         canonical_names = {field["name"] for field in get_canonical_fields(config)}
-        # YAML source blocks carry agency/region as top-level keys; a
-        # database-backed source (see ConfigRegistry._load_from_db) instead
-        # nests them under "config" jsonb — check both. Only ever stamp a
-        # column that's actually part of THIS dataset's canonical schema, so
-        # a dataset with no "region" field (e.g. rd_equipment_inventory)
-        # doesn't pick up an unexpected extra column.
+        # YAML source blocks carry agency/region as top-level key
+        
         source_config = source.get("config") or {}
         if "agency" in canonical_names:
             canonical["agency"] = source.get("agency") or source_config.get("agency") or canonical.get("agency", "unknown")

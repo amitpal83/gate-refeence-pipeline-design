@@ -27,10 +27,7 @@ def log_event(event: str, **fields: Any) -> dict[str, Any]:
 def failure_callback(context: dict[str, Any]) -> None:
     task = context["task_instance"]
     # batch_id equals the DAG run_id by convention everywhere a batch_id is
-    # generated in this pipeline (see BatchIngestor.ingest_cdc_records /
-    # ingest_db_tables call sites in airflow_dag.py), so run_id doubles as
-    # the batch reference here without depending on any one dataset's
-    # specific task_id existing.
+    # generated in this pipeline 
     run_id = context.get("run_id")
     log_event(
         "task_failed",
@@ -58,9 +55,7 @@ def _config_db_engine():
 def start_job_execution(dataset: str, dag_run_id: str, batch_id: str | None = None) -> str | None:
     """Insert a 'running' job_execution row and return its execution_id.
 
-    Monitoring must never fail the pipeline: any error here (config DB
-    unreachable, table missing) is logged and swallowed, returning None —
-    finish_job_execution() then no-ops for that run instead of raising.
+    
     """
     try:
         from sqlalchemy import text

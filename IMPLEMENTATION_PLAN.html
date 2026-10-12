@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GATES Implementation Plan</title>
+<style>
+  :root {
+    --bg: #fafaf7; --surface: #ffffff; --text: #1d2521; --muted: #5d6a63;
+    --border: #dde2dd; --accent: #1f6f4a; --accent-soft: #e3f1ea;
+    --geo: #1f6f4a; --sec: #8a4b1f; --sec-soft: #f6e9dd; --warn: #a33a2a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #14181a; --surface: #1c2225; --text: #e6ebe8; --muted: #9aa8a0;
+      --border: #2e3a37; --accent: #5cc796; --accent-soft: #1e3329;
+      --geo: #5cc796; --sec: #e0a574; --sec-soft: #33261c; --warn: #e58a7b;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #14181a; --surface: #1c2225; --text: #e6ebe8; --muted: #9aa8a0;
+    --border: #2e3a37; --accent: #5cc796; --accent-soft: #1e3329;
+    --geo: #5cc796; --sec: #e0a574; --sec-soft: #33261c; --warn: #e58a7b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 32px 16px 80px; }
+  header h1 { font-size: 1.9rem; margin: 0 0 6px; letter-spacing: -0.01em; }
+  header p { color: var(--muted); margin: 0 0 20px; }
+  nav { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0 8px; position: sticky; top: 0;
+        background: var(--bg); padding: 10px 0; z-index: 2; border-bottom: 1px solid var(--border); }
+  nav a { text-decoration: none; color: var(--text); border: 1px solid var(--border);
+          padding: 4px 12px; border-radius: 999px; font-size: .88rem; background: var(--surface); }
+  nav a:hover { border-color: var(--accent); }
+  h2 { font-size: 1.35rem; margin: 40px 0 12px; }
+  h2 .tag { font-size: .75rem; font-weight: 600; padding: 2px 9px; border-radius: 999px;
+            background: var(--accent-soft); color: var(--accent); margin-left: 8px; vertical-align: middle; }
+  h2.sec .tag { background: var(--sec-soft); color: var(--sec); }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; }
+  ul { margin: 8px 0; padding-left: 20px; }
+  li { margin: 4px 0; }
+  code { font: .86em ui-monospace, Consolas, monospace; background: var(--accent-soft);
+         padding: 1px 5px; border-radius: 4px; }
+  details { background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+            margin: 10px 0; padding: 0 18px; }
+  details[open] { padding-bottom: 14px; }
+  summary { cursor: pointer; padding: 14px 0; font-weight: 600; list-style: none; display: flex; gap: 10px; align-items: baseline; }
+  summary::-webkit-details-marker { display: none; }
+  summary::before { content: "▸"; color: var(--muted); }
+  details[open] summary::before { content: "▾"; }
+  .id { font: 600 .8rem ui-monospace, Consolas, monospace; color: var(--accent);
+        background: var(--accent-soft); padding: 2px 7px; border-radius: 5px; }
+  .sec-block .id { color: var(--sec); background: var(--sec-soft); }
+  .done { margin-top: 10px; padding: 10px 12px; border-left: 3px solid var(--accent);
+          background: var(--accent-soft); border-radius: 0 6px 6px 0; font-size: .94rem; }
+  .sec-block .done { border-left-color: var(--sec); background: var(--sec-soft); }
+  .done b { display: block; font-size: .75rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  .flow { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: .86rem; }
+  .flow span { border: 1px solid var(--border); background: var(--surface); padding: 4px 10px; border-radius: 6px; }
+  .flow i { color: var(--muted); font-style: normal; }
+  table { width: 100%; border-collapse: collapse; font-size: .92rem; background: var(--surface);
+          border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { background: var(--accent-soft); font-size: .8rem; text-transform: uppercase; letter-spacing: .05em; }
+  tr:last-child td { border-bottom: 0; }
+  .scroll { overflow-x: auto; }
+  .risk li::marker { color: var(--warn); }
+  .muted { color: var(--muted); }
+  button#theme { float: right; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+                 border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+  @media (max-width: 560px) { header h1 { font-size: 1.5rem; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <button id="theme" type="button" aria-label="Toggle theme">Theme</button>
+    <h1>GATES Implementation Plan</h1>
+    <p>Two workstreams: <strong>A)</strong> GIS vector pipeline (GeoPandas, OGR/Shapely, GeoParquet, PostGIS, GeoServer) and
+       <strong>B)</strong> PII protection (Presidio, OpenBao) and encryption at rest (MinIO now, Ceph in production).</p>
+  </header>
+
+  <nav>
+    <a href="#assume">Assumptions</a>
+    <a href="#a">A · GIS pipeline</a>
+    <a href="#b">B · Security</a>
+    <a href="#order">Order</a>
+    <a href="#verify">Verification</a>
+    <a href="#risks">Risks</a>
+  </nav>
+
+  <h2 id="assume">Assumptions</h2>
+  <div class="card">
+    <ul>
+      <li>Source CRS must be declared in config when <code>.prj</code> is missing. It is never guessed.</li>
+      <li>Layers keep the latest version only (no history).</li>
+      <li>GeoServer is internal-only. Shapefile and GeoPackage input are both accepted.</li>
+      <li>PII is pseudonymized or masked, not reversible.</li>
+      <li>PoC: single-node OpenBao with Shamir unseal, MinIO. Production: HA OpenBao and Ceph.</li>
+      <li>You run the commands. Nothing is executed on your behalf.</li>
+    </ul>
+  </div>
+
+  <h2 id="a">A · GIS vector pipeline <span class="tag">8 steps</span></h2>
+  <div class="card">
+    <div class="flow">
+      <span>Shapefile / GPKG</span><i>→</i><span>Ingest</span><i>→</i><span>Validate</span><i>→</i>
+      <span>Standardize</span><i>→</i><span>GeoParquet (MinIO)</span><i>→</i><span>PostGIS</span><i>→</i>
+      <span>GeoServer</span><i>→</i><span>DataHub</span>
+    </div>
+    <p class="muted" style="margin:10px 0 0">A separate DAG factory, driven by <code>geo_registry.yaml</code>, outside the dbt/Trino medallion.</p>
+  </div>
+
+  <details open><summary><span class="id">A1</span> Infrastructure</summary>
+    <ul>
+      <li>Add <code>postgis/postgis</code> (separate from the existing Postgres), GeoServer with a data-dir volume, and a <code>geo</code> MinIO bucket in <code>docker-compose.demo.yml</code>.</li>
+      <li>Add <code>geopandas</code>, <code>pyogrio</code>, <code>shapely</code>, <code>pyarrow</code>, <code>geoalchemy2</code>, <code>requests</code> to the Airflow requirements.</li>
+      <li>Add PostGIS and GeoServer host and credentials to <code>.env.example</code>.</li>
+    </ul>
+    <div class="done"><b>Done when</b>Services are healthy, <code>import geopandas, pyogrio</code> works in Airflow, and <code>SELECT postgis_version()</code> answers.</div>
+  </details>
+
+  <details><summary><span class="id">A2</span> Config and registry</summary>
+    <ul>
+      <li><code>config/geo/critical_facilities.yaml</code>: geometry type, source and target CRS, PH bounding box, unique key, attribute rules, thresholds, style.</li>
+      <li><code>orchestration/geo_registry.yaml</code>: one entry per layer (folder, pattern, agency, schedule).</li>
+      <li>Geo config loader, extending <code>common/config_registry.py</code> or sitting beside it.</li>
+    </ul>
+    <div class="done"><b>Done when</b>The loader returns the layer config and rejects one missing <code>source_crs</code> or <code>unique_key</code>.</div>
+  </details>
+
+  <details><summary><span class="id">A3</span> Ingest</summary>
+    <ul>
+      <li><code>ingestion/ingest_shapefile.py</code>: read .shp / .zip / .gpkg, check sidecars, handle DBF encoding, apply alias map for truncated column names.</li>
+      <li>Copy originals untouched to <code>geo/&lt;layer&gt;/raw/&lt;run_id&gt;/</code>.</li>
+      <li>Write a manifest: feature count, CRS found, geometry types, columns.</li>
+    </ul>
+    <div class="done"><b>Done when</b>The sample facilities file ingests with a correct manifest, and a missing <code>.prj</code> without a configured CRS gives a clear error.</div>
+  </details>
+
+  <details><summary><span class="id">A4</span> Validation</summary>
+    <div class="scroll"><table>
+      <tr><th>Hard (quarantine)</th><th>Soft (warn, scored)</th></tr>
+      <tr><td>Missing sidecars or CRS<br>Geometry type mismatch<br>Null/empty geometry over threshold<br>Coordinates outside PH bounding box<br>Duplicate unique key<br>Required attribute rules (GX)</td>
+          <td>Invalid geometry repaired with <code>make_valid</code> (count and IDs logged)<br>Duplicate vertices, slivers<br>Polygon overlaps (boundary layers)<br>DBF truncation and encoding issues</td></tr>
+    </table></div>
+    <ul>
+      <li><code>validation/geo_validation.py</code> returns the same report shape as <code>validate()</code>. Reuse <code>quarantine.py</code>.</li>
+      <li>Add <code>sample_data/geo/failure_demo/</code>: invalid polygon, wrong CRS, swapped lat/lon.</li>
+    </ul>
+    <div class="done"><b>Done when</b>The good sample passes and each failure case gives its own specific reason.</div>
+  </details>
+
+  <details><summary><span class="id">A5</span> Standardize, GeoParquet, PostGIS</summary>
+    <ul>
+      <li><code>common/geo_standardize.py</code>: reproject to EPSG:4326, normalise types, add <code>feature_id</code>, <code>_batch_id</code>, <code>_ingested_at</code>; write GeoParquet to MinIO.</li>
+      <li><code>common/postgis_loader.py</code>: stage table, then transactional swap; typed <code>geometry(Type,4326)</code>, GIST index, <code>ANALYZE</code>.</li>
+      <li>Start with <code>to_postgis</code>; move to <code>ogr2ogr</code> or <code>COPY</code> only if volume demands.</li>
+    </ul>
+    <div class="done"><b>Done when</b>Re-running a batch leaves the row count unchanged and a failed load leaves the previous version intact.</div>
+  </details>
+
+  <details><summary><span class="id">A6</span> GeoServer publishing</summary>
+    <ul>
+      <li><code>common/geoserver_publisher.py</code>: REST API creates workspace, PostGIS datastore, layer and SLD style, idempotently. Prefer publishing a PostGIS view.</li>
+    </ul>
+    <div class="done"><b>Done when</b>WMS <code>GetMap</code> and WFS <code>GetFeature</code> return the five sample features, and a second run changes nothing.</div>
+  </details>
+
+  <details><summary><span class="id">A7</span> DAG and metadata</summary>
+    <ul>
+      <li><code>orchestration/geo_airflow_dag.py</code>: start_job → ingest → validate → standardize → write_geoparquet → load_postgis → publish_geoserver → register_metadata → finish_job, with existing retries, failure callback and monitoring.</li>
+      <li>Register layers in DataHub with a geo tag via <code>metadata/datahub_emit.py</code>.</li>
+    </ul>
+    <div class="done"><b>Done when</b>The DAG runs end to end on the sample, and the bad sample fails at validation into quarantine.</div>
+  </details>
+
+  <details><summary><span class="id">A8</span> Docs</summary>
+    <ul><li>Extend <code>README.md</code> and <code>ARCHITECTURE_PLAN.md</code>; add an "adding a new layer" guide.</li></ul>
+  </details>
+
+  <h2 id="b" class="sec">B · PII protection and encryption at rest <span class="tag">5 steps</span></h2>
+  <div class="card">
+    <div class="flow">
+      <span>Ingest</span><i>→</i><span>GX validation (real values)</span><i>→</i>
+      <span><b>pii_protection</b> (Presidio + OpenBao)</span><i>→</i><span>Load</span><i>→</i><span>Storage with SSE</span>
+    </div>
+    <p class="muted" style="margin:10px 0 0">Field-level protection is a pipeline step. Encryption at rest is infrastructure. You need both.</p>
+  </div>
+
+  <div class="sec-block">
+  <details open><summary><span class="id">B1</span> OpenBao in compose</summary>
+    <ul>
+      <li>OpenBao with Raft storage on a dedicated volume; initialize and unseal.</li>
+      <li>Enable <code>transit</code> and <code>kv</code>. Create keys <code>pii-hmac</code> (and <code>pii-enc</code> only if reversibility is required).</li>
+      <li>AppRole with a policy allowing HMAC and encrypt only, with no decrypt. Enable a file audit device.</li>
+      <li>Dev mode for local only, with a guard against use in the AWS environment.</li>
+    </ul>
+    <div class="done"><b>Done when</b>The loader AppRole can call HMAC and is denied decrypt and other keys.</div>
+  </details>
+
+  <details><summary><span class="id">B2</span> PII tags in the schema</summary>
+    <ul>
+      <li>Add <code>pii:</code> (class, treatment) to fields in <code>schema_project_monitoring.yaml</code>: <code>principal_investigator</code> → pseudonymize, <code>submitted_by</code> → mask.</li>
+      <li>Extend the config DB for <code>rd_equipment_inventory</code>; reject unknown treatments.</li>
+    </ul>
+  </details>
+
+  <details><summary><span class="id">B3</span> pii_protection module</summary>
+    <ul>
+      <li><code>common/pii_protection.py</code>: Transit batch HMAC for pseudonyms, local masking, Presidio <code>BatchAnalyzerEngine</code> on <code>free_text</code> columns with Philippine ID and phone recognizers and a custom Transit operator.</li>
+      <li>Fail closed: if OpenBao is unreachable, the task fails and writes no plaintext.</li>
+      <li>Hook into <code>_make_promote_to_staging</code> after validation, before <code>load_validated_batch</code>, and onto the quarantine path. Land it behind a config flag, off by default.</li>
+      <li>Discovery check on untagged columns; scrub logs, GX docs and DataHub samples; reuse for geo attribute tables.</li>
+    </ul>
+    <div class="done"><b>Done when</b>Staging has no plaintext PI names or emails, pseudonyms are stable across runs, and with OpenBao stopped the task fails without writing.</div>
+  </details>
+
+  <details><summary><span class="id">B4</span> Encryption at rest (PoC)</summary>
+    <ul>
+      <li>MinIO KES backed by OpenBao; default SSE-KMS on the lake and geo buckets.</li>
+      <li>Keep encrypted EBS volumes; put PostGIS and OpenBao data on them.</li>
+      <li>Test KES with your OpenBao version first. If it fails, fall back to MinIO SSE-S3 and record the gap.</li>
+    </ul>
+    <div class="done"><b>Done when</b>An object read directly from the volume is unreadable, and revoking the key makes objects unreadable.</div>
+  </details>
+
+  <details><summary><span class="id">B5</span> Production note</summary>
+    <ul>
+      <li><code>docs/PRODUCTION_SECURITY.md</code>: Ceph RGW SSE with OpenBao, OSD encryption, HA Raft and unseal strategy, token renewal via agent, TLS/mTLS.</li>
+      <li>The RGW and OpenBao compatibility test is a first-phase production item.</li>
+    </ul>
+  </details>
+  </div>
+
+  <h2 id="order">Order and dependencies</h2>
+  <div class="card">
+    <div class="scroll"><table>
+      <tr><th>Phase</th><th>Steps</th><th>Why</th></tr>
+      <tr><td>1</td><td>A1 + B1</td><td>Both are compose changes. Do them together.</td></tr>
+      <tr><td>2</td><td>A2, B2</td><td>Config and tags, no behaviour change.</td></tr>
+      <tr><td>3</td><td>A3, A4, B3</td><td>B3 edits the working <code>promote_to_staging</code>, so it lands behind a flag.</td></tr>
+      <tr><td>4</td><td>A5, A6, B4</td><td>Needs buckets (A1) and OpenBao (B1).</td></tr>
+      <tr><td>5</td><td>A7, A8, B5</td><td>Wire up, document.</td></tr>
+    </table></div>
+  </div>
+
+  <h2 id="verify">Verification</h2>
+  <div class="card"><ul>
+    <li><b>Geo:</b> good sample passes; bad sample quarantined with specific reasons; re-run idempotent; WMS and WFS return features.</li>
+    <li><b>Security:</b> no plaintext PII in staging, bronze, silver, gold or quarantine; loader role cannot decrypt; encrypted objects unreadable without OpenBao.</li>
+    <li><b>Regression:</b> the <code>project_monitoring</code> and <code>rd_equipment_inventory</code> DAGs still pass end to end after each step.</li>
+  </ul></div>
+
+  <h2 id="risks">Risks</h2>
+  <div class="card"><ul class="risk">
+    <li>Single-node OpenBao is a single point of failure: fine for the PoC, not for production.</li>
+    <li>Presidio recall on Filipino names is imperfect; treat free-text scanning as risk reduction.</li>
+    <li>A wrong or missing CRS is the most likely silent geo error.</li>
+    <li>KES-with-OpenBao and RGW-with-OpenBao compatibility are unverified assumptions.</li>
+    <li>Pseudonymized data is still personal data under the Philippine Data Privacy Act.</li>
+  </ul></div>
+</div>
+<script>
+  (function () {
+    var root = document.documentElement, btn = document.getElementById("theme");
+    try { var t = localStorage.getItem("theme"); if (t) root.setAttribute("data-theme", t); } catch (e) {}
+    btn.addEventListener("click", function () {
+      var dark = root.getAttribute("data-theme") === "dark" ||
+        (!root.getAttribute("data-theme") && matchMedia("(prefers-color-scheme: dark)").matches);
+      var next = dark ? "light" : "dark";
+      root.setAttribute("data-theme", next);
+      try { localStorage.setItem("theme", next); } catch (e) {}
+    });
+  })();
+</script>
+</body>
+</html>

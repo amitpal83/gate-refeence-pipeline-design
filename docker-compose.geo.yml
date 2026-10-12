@@ -1,0 +1,82 @@
+# Geo pipeline + PII protection services. An OVERRIDE file: it adds services
+# to docker-compose.demo.yml and changes nothing that file defines, so the
+# existing pipelines run exactly as before.
+#
+# Use both files together. On the EC2 host (SSM session, from /opt/gates-demo/app):
+#   docker compose -f docker-compose.demo.yml -f docker-compose.geo.yml up -d openbao-perms openbao openbao-init
+# The host's .env must also contain:
+#   GATES_DATA_ROOT=/opt/gates-demo/data   (the encrypted EBS volume)
+#   GATES_ENV=aws
+#   OPENBAO_POC_ACK=yes                    (accepts the POC unseal-key-on-host trade-off)
+# The systemd unit only starts docker-compose.demo.yml, so this file is started
+# by hand, and openbao-init must be re-run after a host reboot to unseal.
+#
+# POC ONLY: OpenBao runs single-node with ONE unseal key share, stored on this
+# host under .local-data/openbao-init (git-ignored). Production uses an HA
+# Raft cluster with auto-unseal or HSM-backed unseal — see
+# docs/PRODUCTION_SECURITY.md (planned step S12).
+
+services:
+  openbao-perms:
+    # On a Linux Docker host, bind-mounted folders are created owned by root,
+    # and OpenBao runs as its own user, so it could not write its data or
+    # audit log. This one-shot fixes ownership first. It uses the OpenBao
+    # image so the `openbao` user name resolves to the right uid.
+    image: quay.io/openbao/openbao:2.1.0
+    mem_limit: 64m
+    user: "0"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - mkdir -p /data /audit && chown -R openbao:openbao /data /audit
+    volumes:
+      - ${GATES_DATA_ROOT:-.local-data}/openbao:/data
+      - ${GATES_DATA_ROOT:-.local-data}/openbao-audit:/audit
+    restart: "no"
+
+  openbao:
+    image: quay.io/openbao/openbao:2.1.0
+    mem_limit: 256m
+    depends_on:
+      openbao-perms:
+        condition: service_completed_successfully
+    # Comes back after a host reboot, but sealed. Re-run openbao-init to unseal.
+    restart: unless-stopped
+    command: ["server", "-config=/openbao/config/config.hcl"]
+    cap_add:
+      - IPC_LOCK
+    ports:
+      # Loopback only. Never publish the key service to the team network.
+      - "127.0.0.1:8200:8200"
+    volumes:
+      - ./deployment/openbao/config.hcl:/openbao/config/config.hcl:ro
+      - ${GATES_DATA_ROOT:-.local-data}/openbao:/openbao/data
+      - ${GATES_DATA_ROOT:-.local-data}/openbao-audit:/openbao/audit
+
+  openbao-init:
+    # One-shot, idempotent: initializes and unseals OpenBao on first run,
+    # unseals on later runs, and (re)applies engines, keys, policies and
+    # AppRoles. It writes the unseal key, root token and the two AppRole
+    # credential files to /init. It finishes with a self-check that the
+    # loader role cannot decrypt and the reader role cannot encrypt.
+    image: quay.io/openbao/openbao:2.1.0
+    mem_limit: 64m
+    depends_on:
+      openbao:
+        condition: service_started
+    environment:
+      BAO_ADDR: http://openbao:8200
+      GATES_ENV: ${GATES_ENV:-local}
+      # Storing the unseal key on the host is demo-only. bootstrap.sh refuses
+      # to run when GATES_ENV=aws unless this is set to "yes" on purpose.
+      OPENBAO_POC_ACK: ${OPENBAO_POC_ACK:-}
+    volumes:
+      - ./deployment/openbao:/bootstrap:ro
+      - ${GATES_DATA_ROOT:-.local-data}/openbao-init:/init
+    entrypoint: ["/bin/sh", "-ec"]
+    # One list item, not a bare multi-line string — same reason as kafka-init
+    # in docker-compose.demo.yml.
+    # tr strips Windows line endings, which would otherwise make sh fail on a
+    # checkout that picked up CRLF.
+    command:
+      - tr -d '\r' < /bootstrap/bootstrap.sh > /tmp/bootstrap.sh && sh /tmp/bootstrap.sh
+    restart: "no"

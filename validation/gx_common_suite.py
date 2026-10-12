@@ -55,14 +55,7 @@ def run_common_suite(df, schema: dict, suite_name: str = "common_quality_suite",
     """custom_suite_fn: optional callable(validator) -> validator, e.g.
     gx_custom_suite_project_monitoring.build_custom_suite. Passing it here
     is what actually combines the common + custom suites into ONE
-    checkpoint — omitting it (the previous behavior) silently checkpoints
-    the common suite alone.
-
-    `schema` is the already-resolved dataset config dict (from
-    common.config_registry.ConfigRegistry.get_dataset(), whether it came
-    from YAML or the database) — not a file path. This is what lets
-    validation work for datasets that only exist in the config database,
-    with no schema_*.yaml file on disk at all."""
+    checkpoint """
     context = gx.get_context()
     datasource = context.sources.add_or_update_pandas(name="gates_common_ds")
     asset = datasource.add_dataframe_asset(name=schema["dataset"])

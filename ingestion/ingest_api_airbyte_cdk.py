@@ -1,17 +1,7 @@
 """
 ingest_api_airbyte_cdk.py
 
-*** NOT VERIFIED IN THIS ENVIRONMENT *** (no network to install airbyte-cdk
-and actually run this). This is the intended replacement for
-ingest_api_airbyte.py's hand-rolled manifest reader: instead of us
-interpreting a handful of manifest keys ourselves, this shells out to the
-REAL connector (airbyte_cdk_connector/main.py, built on airbyte_cdk's
-YamlDeclarativeSource) and parses its actual Airbyte Protocol output —
-newline-delimited AirbyteMessage JSON on stdout — then hands the extracted
-records to the SAME Common Ingestion Framework functions every other
-ingestion path uses. Nothing past `_read_records_via_real_connector()` is
-new or unverified; only that one function depends on airbyte-cdk actually
-being installed and working.
+
 """
 import sys
 import json
@@ -36,8 +26,7 @@ DEFAULT_SOURCE_ID = "dost_pms_api"
 
 def _read_records_via_real_connector(config_path: Path, catalog_path: Path) -> list[dict]:
     """Runs the real Airbyte connector's `read` command and parses its
-    Airbyte Protocol output. Requires `pip install -r
-    airbyte_cdk_connector/requirements.txt` first."""
+    Airbyte Protocol output. """
     proc = subprocess.run(
         [sys.executable, str(CONNECTOR_DIR / "main.py"), "read",
          "--config", str(config_path), "--catalog", str(catalog_path)],

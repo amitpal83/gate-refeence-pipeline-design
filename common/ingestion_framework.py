@@ -2,9 +2,7 @@
 common/ingestion_framework.py
 
 The Common Ingestion Framework referenced throughout the GATES LLD.
-Both ingest_file_navi_gates.py and ingest_api_airbyte.py call the SAME
-functions here — nothing dataset-specific is hardcoded. Given a different
-dataset's config/schema_*.yaml + config/column_aliasing.yaml, this module
+Given a different dataset's config/schema_*.yaml + config/column_aliasing.yaml, this module
 works unchanged.
 """
 import json
