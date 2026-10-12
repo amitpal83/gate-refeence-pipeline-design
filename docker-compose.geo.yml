@@ -222,13 +222,15 @@ services:
     image: quay.io/minio/kes:latest
     mem_limit: 128m
     user: "0"
-    command: ["server", "--config=/kes/config.yml"]
+    command: ["server", "--config=/config/config.yml"]
     depends_on:
       kes-bootstrap:
         condition: service_completed_successfully
     volumes:
       - ${GATES_DATA_ROOT:-.local-data}/kes-certs:/certs:ro
-      - ${GATES_DATA_ROOT:-.local-data}/kes:/kes:ro
+      # Not /kes: the image's program is installed as the file /kes, so a folder
+      # cannot be mounted there.
+      - ${GATES_DATA_ROOT:-.local-data}/kes:/config:ro
     restart: unless-stopped
 
   minio-geo:
