@@ -1,9 +1,6 @@
 # OpenBao server configuration — POC, single node.
 
-ui            = true
-# Raft + containers: mlock is not available, so it is disabled. IPC_LOCK is
-# still granted in docker-compose.geo.yml for when it is.
-disable_mlock = true
+ui = true
 
 storage "raft" {
   path    = "/openbao/data"

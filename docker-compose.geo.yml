@@ -41,7 +41,10 @@ services:
         condition: service_completed_successfully
     # Comes back after a host reboot, but sealed. Re-run openbao-init to unseal.
     restart: unless-stopped
-    command: ["server", "-config=/openbao/config/config.hcl"]
+    # The image's start script already adds -config=/openbao/config (the whole
+    # folder), which picks up the mounted config.hcl. Passing -config again
+    # loads it twice and fails with "address already in use" on port 8200.
+    command: ["server"]
     cap_add:
       - IPC_LOCK
     ports:
