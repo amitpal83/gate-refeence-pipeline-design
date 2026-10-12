@@ -62,7 +62,9 @@ services:
     # credential files to /init. It finishes with a self-check that the
     # loader role cannot decrypt and the reader role cannot encrypt.
     image: quay.io/openbao/openbao:2.1.0
-    mem_limit: 64m
+    # 64m was too small: the bao CLI was OOM-killed (exit 137). This container
+    # runs for seconds and exits, so the higher cap is only held briefly.
+    mem_limit: 256m
     depends_on:
       openbao:
         condition: service_started
