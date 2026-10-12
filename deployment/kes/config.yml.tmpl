@@ -8,10 +8,14 @@ address: 0.0.0.0:7373
 admin:
   identity: disabled
 
-# Mutual TLS: KES presents kes.crt, and MinIO presents minio.crt.
+# Mutual TLS: KES presents kes.crt, and MinIO presents minio.crt. KES checks the
+# client certificate against `ca`, so the self-signed MinIO certificate is listed
+# there as the one certificate it trusts. Without it KES rejects MinIO with
+# "tls: bad certificate". The policy below still authorizes MinIO by its identity.
 tls:
   key: /certs/kes.key
   cert: /certs/kes.crt
+  ca: /certs/minio.crt
 
 # MinIO may create keys, ask KES for data keys, and decrypt them. Nothing else,
 # in particular it cannot delete a key.
