@@ -58,9 +58,12 @@ pii:
   vault_government_ids: false
   on_unreachable_key_service: fail
 
-# Used by the GeoServer publisher (planned step S10).
+# Used by the PostGIS loader (serving view) and the GeoServer publisher (planned
+# step S10). Only these columns are visible to GeoServer. The masked contact
+# columns are deliberately left out.
 geoserver:
   workspace: gates
+  expose_columns: [facility_id, name, facility_type, address]
   style:
     attribute: facility_type
     point_size: 8

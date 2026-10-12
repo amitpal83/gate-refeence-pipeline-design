@@ -12,8 +12,12 @@ in Airflow, so write to a mounted output folder:
 
     mkdir -p sample_data/geo
     docker compose -f docker-compose.demo.yml -f docker-compose.geo.yml run --rm -T --no-deps \
+      --entrypoint /opt/airflow/geo-venv/bin/python \
       --user "$(id -u):0" -e HOME=/tmp -e GEO_SAMPLE_OUT=/out -v "$PWD/sample_data/geo:/out" \
-      airflow /opt/airflow/geo-venv/bin/python - < sample_data/geo/make_sample.py
+      airflow - < sample_data/geo/make_sample.py
+
+(--entrypoint is needed because the Airflow image's start script otherwise treats
+the command as an `airflow` subcommand.)
 """
 from __future__ import annotations
 

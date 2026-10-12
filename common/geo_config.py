@@ -9,6 +9,7 @@ Airflow environment when the DAG file is parsed.
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,7 @@ GEOMETRY_TYPES = ("Point", "MultiPoint", "LineString", "MultiLineString", "Polyg
 SUPPORTED_CRS = "EPSG:4326"
 REQUIRED_KEYS = ("layer", "geometry_type", "source_crs", "target_crs", "bbox_ph", "unique_key", "attributes")
 REGISTRY_KEYS = ("layer", "agency", "source_folder", "file_pattern", "schedule_interval", "start_date")
+_SQL_NAME = re.compile(r"^[a-z][a-z0-9_]{0,40}$")
 
 
 class GeoConfigError(ValueError):
@@ -99,6 +101,24 @@ def validate_layer_config(config: dict) -> dict:
                     errors.append(f"pii.columns names {column!r}, which is not listed in attributes")
             if unique_key in policy.columns:
                 errors.append("the unique_key cannot be a PII column, it keys the vault")
+
+    layer_name = config.get("layer")
+    if layer_name and not _SQL_NAME.match(str(layer_name)):
+        errors.append(f"layer {layer_name!r} must be lowercase letters, digits and underscores (it becomes a table name)")
+
+    if "geoserver" in config:
+        expose = (config["geoserver"] or {}).get("expose_columns")
+        if not isinstance(expose, list) or not expose:
+            errors.append("geoserver.expose_columns is required: the columns GeoServer may show")
+        else:
+            pii_columns = set(load_policy(config["pii"]).columns) if "pii" in config and not any(e.startswith("pii") for e in errors) else set()
+            for column in expose:
+                if column not in names:
+                    errors.append(f"geoserver.expose_columns names {column!r}, which is not listed in attributes")
+                elif not _SQL_NAME.match(column):
+                    errors.append(f"geoserver.expose_columns {column!r} must be lowercase letters, digits and underscores")
+                elif column in pii_columns:
+                    errors.append(f"geoserver.expose_columns includes {column!r}, which is a PII column")
 
     if errors:
         raise GeoConfigError(f"Invalid geo layer config {config.get('layer', '?')!r}:\n  - " + "\n  - ".join(errors))

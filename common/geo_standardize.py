@@ -1,0 +1,76 @@
+"""Standardize a validated, PII-protected geo layer and write it as GeoParquet.
+
+Runs after protect_pii, so everything here handles the serving copy only.
+GeoParquet goes to the MinIO `gates-geo` bucket (Ceph RGW in production) with
+bounding-box covering metadata, so readers can skip files by location.
+
+    gates-geo/<layer>/batch=<run id>/part.parquet
+
+Runs in the geo environment (geopandas, pyarrow, boto3). Storage credentials are
+passed in as a dict read from OpenBao (kv/geo/minio) by the caller.
+"""
+from __future__ import annotations
+
+import io
+import re
+from datetime import datetime, timezone
+
+import geopandas as gpd
+from pyproj import CRS
+
+_UNSAFE_KEY_CHARS = re.compile(r"[^A-Za-z0-9._=-]")
+
+
+def safe_batch_id(batch_id: str) -> str:
+    """Airflow run ids contain ':' and '+', which are awkward in object keys."""
+    return _UNSAFE_KEY_CHARS.sub("_", batch_id)
+
+
+def standardize(gdf: gpd.GeoDataFrame, layer_config: dict, batch_id: str) -> gpd.GeoDataFrame:
+    """Reproject to the target CRS (a no-op for WGS 84 layers) and add the
+    technical columns _batch_id and _ingested_at."""
+    if gdf.crs is None:
+        raise ValueError("The layer has no CRS. Ingest should have set one.")
+    target = CRS.from_user_input(layer_config["target_crs"])
+    out = gdf if gdf.crs.equals(target, ignore_axis_order=True) else gdf.to_crs(target)
+    out = out.copy()
+    out["_batch_id"] = batch_id
+    out["_ingested_at"] = datetime.now(timezone.utc)
+    return out
+
+
+def _s3(minio: dict):
+    import boto3
+    from botocore.config import Config
+
+    return boto3.client(
+        "s3",
+        endpoint_url=minio["endpoint"],
+        aws_access_key_id=minio["access_key"],
+        aws_secret_access_key=minio["secret_key"],
+        region_name="us-east-1",
+        config=Config(signature_version="s3v4", s3={"addressing_style": "path"}),
+    )
+
+
+def geoparquet_key(layer: str, batch_id: str) -> str:
+    return f"{layer}/batch={safe_batch_id(batch_id)}/part.parquet"
+
+
+def write_geoparquet(gdf: gpd.GeoDataFrame, layer: str, batch_id: str, minio: dict) -> str:
+    """Write the layer and return its s3:// URI. Writing the same batch again
+    replaces the object, so a retry is safe."""
+    buffer = io.BytesIO()
+    gdf.to_parquet(buffer, write_covering_bbox=True)
+    key = geoparquet_key(layer, batch_id)
+    _s3(minio).put_object(Bucket=minio["bucket"], Key=key, Body=buffer.getvalue())
+    return f"s3://{minio['bucket']}/{key}"
+
+
+def read_geoparquet(layer: str, batch_id: str, minio: dict) -> gpd.GeoDataFrame:
+    body = _s3(minio).get_object(Bucket=minio["bucket"], Key=geoparquet_key(layer, batch_id))["Body"].read()
+    return gpd.read_parquet(io.BytesIO(body))
+
+
+def delete_geoparquet(layer: str, batch_id: str, minio: dict) -> None:
+    _s3(minio).delete_object(Bucket=minio["bucket"], Key=geoparquet_key(layer, batch_id))
