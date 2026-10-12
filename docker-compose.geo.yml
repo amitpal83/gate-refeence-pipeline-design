@@ -85,3 +85,103 @@ services:
     command:
       - tr -d '\r' < /bootstrap/bootstrap.sh > /tmp/bootstrap.sh && sh /tmp/bootstrap.sh
     restart: "no"
+
+  # --- Geo stores (step S2) ---------------------------------------------
+  # Needs these in the host's .env (see geo.env.example):
+  #   GEO_DB_PASSWORD, GEOSERVER_ADMIN_PASSWORD
+  # Compose reads the whole file, so every command that uses this override
+  # fails until both are set.
+
+  postgis:
+    # Serving store for geo layers and the PII vault. Separate from the
+    # `postgres` service (Airflow + config) and `source-db` (CDC source).
+    image: postgis/postgis:16-3.4
+    mem_limit: 512m
+    environment:
+      POSTGRES_USER: ${GEO_DB_USER:-gates_geo}
+      POSTGRES_PASSWORD: ${GEO_DB_PASSWORD:?Set GEO_DB_PASSWORD in .env}
+      POSTGRES_DB: ${GEO_DB_NAME:-gates_geo}
+    ports:
+      - "127.0.0.1:5434:5432"
+    volumes:
+      # On the encrypted EBS data volume. Object-store encryption does not
+      # cover this directory.
+      - ${GATES_DATA_ROOT:-.local-data}/postgis:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  geoserver:
+    # Internal only: loopback port, reached through an SSM port-forward. Hospital
+    # and school locations are not public, so do not add it to the security
+    # group's demo UI ports.
+    image: kartoza/geoserver:2.25.2
+    mem_limit: 1536m
+    depends_on:
+      postgis:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8600:8080"
+    environment:
+      GEOSERVER_ADMIN_USER: ${GEOSERVER_ADMIN_USER:-admin}
+      GEOSERVER_ADMIN_PASSWORD: ${GEOSERVER_ADMIN_PASSWORD:?Set GEOSERVER_ADMIN_PASSWORD in .env}
+      INITIAL_MEMORY: 512M
+      MAXIMUM_MEMORY: 1G
+    volumes:
+      - ${GATES_DATA_ROOT:-.local-data}/geoserver:/opt/geoserver/data_dir
+
+  geo-init:
+    # One-shot, same pattern as minio-init in docker-compose.demo.yml.
+    # Lifecycle expiry on the quarantine bucket is added once the retention
+    # period is decided.
+    image: quay.io/minio/mc:latest
+    mem_limit: 128m
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"
+        mc mb --ignore-existing local/gates-geo
+        mc mb --ignore-existing local/gates-geo-quarantine
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env}
+    restart: "no"
+
+  # --- Airflow with the geo environment ----------------------------------
+  # Swaps in an image built on top of gates-demo-airflow:local. The existing
+  # Dockerfile is untouched. The geo packages live in a separate Python
+  # environment (/opt/airflow/geo-venv), so they cannot change the versions
+  # dbt and Great Expectations use.
+  airflow-init:
+    build:
+      context: ./deployment/airflow-geo
+    image: gates-demo-airflow-geo:local
+
+  airflow:
+    image: gates-demo-airflow-geo:local
+    # 3g in the demo file; Presidio plus the spaCy model needs headroom.
+    mem_limit: 4g
+    depends_on:
+      openbao-init:
+        condition: service_completed_successfully
+      postgis:
+        condition: service_healthy
+    environment:
+      OPENBAO_ADDR: http://openbao:8200
+      OPENBAO_APPROLE_FILE: /run/secrets/openbao-approle.env
+      GEO_PYTHON: /opt/airflow/geo-venv/bin/python
+      GEO_DB_HOST: postgis
+      GEO_DB_PORT: "5432"
+      GEO_DB_NAME: ${GEO_DB_NAME:-gates_geo}
+      GEOSERVER_URL: http://geoserver:8080/geoserver
+    volumes:
+      # Only the loader credential file. keys.env (root token, unseal key) and
+      # the reader credential file are never mounted into Airflow. The file
+      # must exist before the container is created, which openbao-init
+      # guarantees through depends_on.
+      - ${GATES_DATA_ROOT:-.local-data}/openbao-init/approle-geo-loader.env:/run/secrets/openbao-approle.env:ro

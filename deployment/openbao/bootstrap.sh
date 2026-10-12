@@ -84,11 +84,17 @@ create_role() {
   if [ ! -f "$cred_file" ]; then
     role_id=$(bao read -field=role_id "auth/approle/role/$name/role-id")
     secret_id=$(bao write -f -field=secret_id "auth/approle/role/$name/secret-id")
-    printf 'ROLE_ID=%s\nSECRET_ID=%s\n' "$role_id" "$secret_id" > "$cred_file"
-    # POC: world-readable so a container running as another user (Airflow,
-    # uid 50000) can read it. Production delivers these through an OpenBao
-    # agent or a secrets mount, not a shared file.
+    ( umask 077; printf 'ROLE_ID=%s\nSECRET_ID=%s\n' "$role_id" "$secret_id" > "$cred_file" )
+  fi
+  # Applied on every run, so it also corrects a file created earlier.
+  # POC: only the loader file is world-readable, so the Airflow container
+  # (uid 50000) can read it. The reader file opens the decrypt role, so it
+  # stays root-only. Production delivers these through an OpenBao agent or a
+  # secrets mount, not a shared file.
+  if [ "$name" = "geo-loader" ]; then
     chmod 644 "$cred_file"
+  else
+    chmod 600 "$cred_file"
   fi
 }
 
