@@ -134,8 +134,9 @@ services:
 
   geo-init:
     # One-shot, same pattern as minio-init in docker-compose.demo.yml.
-    # Lifecycle expiry on the quarantine bucket is added once the retention
-    # period is decided.
+    # The quarantine bucket holds rejected files with readable PII, so objects
+    # expire after GEO_QUARANTINE_RETENTION_DAYS (default 14). MinIO applies
+    # expiry on a schedule, so objects go within about a day of the limit.
     image: quay.io/minio/mc:latest
     mem_limit: 128m
     depends_on:
@@ -147,9 +148,13 @@ services:
         mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"
         mc mb --ignore-existing local/gates-geo
         mc mb --ignore-existing local/gates-geo-quarantine
+        # Remove and re-add, so running this again never stacks duplicate rules.
+        mc ilm rule rm --all --force local/gates-geo-quarantine > /dev/null 2>&1 || true
+        mc ilm rule add --expire-days "$${GEO_QUARANTINE_RETENTION_DAYS}" local/gates-geo-quarantine
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env}
+      GEO_QUARANTINE_RETENTION_DAYS: ${GEO_QUARANTINE_RETENTION_DAYS:-14}
     restart: "no"
 
   # --- Airflow with the geo environment ----------------------------------

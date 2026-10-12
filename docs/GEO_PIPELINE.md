@@ -51,7 +51,7 @@ The DAG is `<layer>_geo_pipeline`, for example `critical_facilities_geo_pipeline
 |---|---|---|
 | Source folder | The dropped file, with readable PII | Whoever manages the drop |
 | `/tmp/geo-work` in the Airflow container | Working copies. Readable PII only until `protect_pii` finishes | The DAG tasks. Deleted at the end of the run and on failure |
-| MinIO `gates-geo-quarantine` | Original files of rejected batches, with readable PII | Restricted. No retention period yet |
+| MinIO `gates-geo-quarantine` | Original files of rejected batches, with readable PII | Restricted. Objects expire after `GEO_QUARANTINE_RETENTION_DAYS` days (default 14) |
 | MinIO `gates-geo` | GeoParquet, serving copy only | The loader |
 | PostGIS `geo.<layer>` | Serving copy: pseudonyms, masked values | `geo_loader` |
 | PostGIS `geo_serving.<layer>` | View with only `geoserver.expose_columns` | `geoserver_ro` |
@@ -159,14 +159,18 @@ rm sample_data/geo/critical_facilities/duplicate_key.*
 
 The pipeline reads the newest file in the source folder, so remove the bad copy afterwards. The source folder is mounted read-only in Airflow, so the pipeline cannot move a failed file itself.
 
-### After a reboot
+### After a restart or a reboot
 
-OpenBao comes back sealed. PostGIS and GeoServer are not started by the demo's systemd unit, and the unit starts Airflow from the original image, without the geo environment. Until the start script is changed, run:
+OpenBao comes back sealed. The demo's own systemd unit does not start PostGIS or GeoServer, and it starts Airflow from the original image, without the geo environment. `deployment/start-geo.sh` fixes all three, and the unit `deployment/systemd/gates-geo.service` runs it after `gates-demo.service` starts and whenever that service restarts. Install the unit once on the host:
 
 ```bash
-$GEO up -d openbao-init            # unseals OpenBao
-$GEO up -d postgis geoserver geo-init airflow
+sudo cp /opt/gates-demo/app/deployment/systemd/gates-geo.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now gates-geo.service
+systemctl status gates-geo.service
 ```
+
+The unit assumes the demo unit is `gates-demo.service` and the repository is in `/opt/gates-demo/app`. A new instance built from `terraform/user_data.sh.tftpl` needs this install step once. To run the same steps by hand, use `bash deployment/start-geo.sh`.
 
 ## Tests
 
@@ -191,6 +195,6 @@ All of them run inside the Airflow container with `-e PYTHONPATH=/opt/airflow/da
 | OpenBao cannot write its data | Bind-mounted folders are owned by root. `openbao-perms` fixes this, so start it first |
 | `compose run` fails with "invalid choice" from `airflow` | The Airflow image treats other commands as `airflow` subcommands. Add `--entrypoint /opt/airflow/geo-venv/bin/python` |
 | A compose command stops with a message about `GEO_DB_PASSWORD` | Compose reads the whole override file. Both passwords must be in `.env` |
-| Geo tasks fail after a reboot | OpenBao is sealed, or Airflow is running the original image. See "After a reboot" |
+| Geo tasks fail after a restart or reboot | OpenBao is sealed, or Airflow is running the original image. Run `bash deployment/start-geo.sh`, and install `gates-geo.service` so it happens automatically. See "After a restart or a reboot" |
 | The newest run read the wrong file | The pipeline takes the newest file in the source folder. Remove leftover test files |
 | A file named `.env*` cannot be created | The workspace's permission rules block those names. Use `geo.env.example` |

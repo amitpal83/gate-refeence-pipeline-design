@@ -1,0 +1,29 @@
+# Starts the geo layer after the demo stack, and again whenever the demo stack
+# restarts. Install once on the EC2 host (see docs/GEO_PIPELINE.md):
+#
+#   sudo cp /opt/gates-demo/app/deployment/systemd/gates-geo.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now gates-geo.service
+#
+# Assumes the demo unit is gates-demo.service and the repository is in
+# /opt/gates-demo/app, as terraform/user_data.sh.tftpl sets up.
+
+[Unit]
+Description=GATES geo pipeline layer (OpenBao, PostGIS, GeoServer, geo Airflow image)
+After=gates-demo.service docker.service
+Wants=gates-demo.service
+# Restarting or stopping the demo stack restarts this unit too, which puts the
+# geo Airflow image back after the demo's start script replaces it.
+PartOf=gates-demo.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=ec2-user
+WorkingDirectory=/opt/gates-demo/app
+# Run through bash, so the script does not need its executable bit set.
+ExecStart=/bin/bash /opt/gates-demo/app/deployment/start-geo.sh
+TimeoutStartSec=900
+
+[Install]
+WantedBy=multi-user.target

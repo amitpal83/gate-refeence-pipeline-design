@@ -19,7 +19,7 @@ Items marked **verify** are assumptions that have not been tested against your v
 | Storage credentials | MinIO root user, stored in `kv/geo/minio` | A scoped user per service, with a policy limited to its buckets |
 | Vault location | `pii_vault` schema in the same PostGIS database | A separate database or host, with its own network rule |
 | PostGIS data | Encrypted EBS volume | Encrypted volume or RBD with LUKS, key in OpenBao. Object-store encryption does not cover it |
-| Quarantine | MinIO bucket, no retention period | Lifecycle rule with an agreed number of days, encryption, and access limited to the pipeline role |
+| Quarantine | MinIO bucket, objects expire after 14 days (configurable) | Keep a lifecycle rule with the agreed number of days, add encryption, and limit access to the pipeline role |
 | GeoServer access | One admin account | Named viewer accounts with read-only roles. Keep anonymous access closed. Keep the port off the internet |
 | Audit log | A file inside the OpenBao container volume | Ship to central logging, outside the key service's own host |
 | Source folder | Read-only mount | A writable drop location, with processed files moved out |
