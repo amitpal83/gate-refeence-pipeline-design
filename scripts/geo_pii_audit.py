@@ -144,8 +144,9 @@ def main() -> int:
     check("no working files are left in the container", not leftovers, str([str(p) for p in leftovers]))
 
     quarantined = s3.list_objects_v2(Bucket=minio["quarantine_bucket"]).get("KeyCount", 0)
-    print(f"NOTE  the quarantine bucket holds {quarantined} object(s). It keeps rejected files in plaintext on purpose; "
-          "access to it must stay restricted and a retention period is still to be set.")
+    print(f"NOTE  the quarantine bucket holds {quarantined} object(s). It keeps rejected files with readable PII on "
+          "purpose. They are encrypted at rest (SSE-KMS) and expire after the retention period, and access to the "
+          "bucket must stay restricted.")
 
     print(f"\n{'ALL CHECKS PASSED' if not failures else str(len(failures)) + ' CHECK(S) FAILED'}")
     return 1 if failures else 0

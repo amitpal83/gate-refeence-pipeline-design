@@ -8,8 +8,9 @@
 #
 #   1. OpenBao comes back sealed after a restart. openbao-init unseals it and
 #      re-applies its setup. It is idempotent.
-#   2. PostGIS, GeoServer and the MinIO bucket setup are started.
-#   3. Airflow is switched back to the geo image (the one with the geo Python
+#   2. KES and the encrypted geo MinIO are started. They need OpenBao unsealed.
+#   3. PostGIS, GeoServer and the bucket setup are started.
+#   4. Airflow is switched back to the geo image (the one with the geo Python
 #      environment).
 set -euo pipefail
 
@@ -22,6 +23,9 @@ echo "[start-geo] starting OpenBao"
 
 echo "[start-geo] unsealing OpenBao and applying its setup"
 "${GEO[@]}" run --rm --no-deps openbao-init
+
+echo "[start-geo] starting KES and the encrypted geo MinIO (needs OpenBao unsealed)"
+"${GEO[@]}" up -d kes-certs kes-bootstrap kes minio-geo
 
 echo "[start-geo] starting PostGIS, GeoServer, bucket setup and the geo Airflow image"
 "${GEO[@]}" up -d postgis geoserver geo-init airflow

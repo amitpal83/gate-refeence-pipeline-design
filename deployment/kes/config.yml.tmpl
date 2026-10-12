@@ -1,0 +1,52 @@
+# KES configuration template. deployment/kes/bootstrap.sh fills in the three
+# __PLACEHOLDERS__ and writes the result to .local-data/kes/config.yml, which
+# holds the AppRole secret, so that file is kept readable by root only.
+
+version: v1
+address: 0.0.0.0:7373
+
+admin:
+  identity: disabled
+
+# Mutual TLS: KES presents kes.crt, and MinIO presents minio.crt.
+tls:
+  key: /certs/kes.key
+  cert: /certs/kes.crt
+
+# MinIO may create keys, ask KES for data keys, and decrypt them. Nothing else,
+# in particular it cannot delete a key.
+policy:
+  minio:
+    allow:
+      - /v1/status
+      - /v1/metrics
+      - /v1/api
+      - /v1/key/create/*
+      - /v1/key/generate/*
+      - /v1/key/decrypt/*
+      - /v1/key/list/*
+    identities:
+      - __MINIO_IDENTITY__
+
+cache:
+  expiry:
+    any: 5m0s
+    unused: 20s
+
+log:
+  error: on
+  audit: off
+
+# The master keys live in OpenBao, in the kv v2 engine under kes/.
+keystore:
+  vault:
+    endpoint: http://openbao:8200
+    engine: kv
+    version: v2
+    prefix: kes
+    approle:
+      id: __KES_ROLE_ID__
+      secret: __KES_SECRET_ID__
+      retry: 15s
+    status:
+      ping: 10s

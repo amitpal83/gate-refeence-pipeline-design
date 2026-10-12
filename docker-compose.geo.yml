@@ -133,21 +133,28 @@ services:
       - ${GATES_DATA_ROOT:-.local-data}/geoserver:/opt/geoserver/data_dir
 
   geo-init:
-    # One-shot, same pattern as minio-init in docker-compose.demo.yml.
+    # One-shot, same pattern as minio-init in docker-compose.demo.yml, but against
+    # the encrypted minio-geo, not the existing minio.
     # The quarantine bucket holds rejected files with readable PII, so objects
     # expire after GEO_QUARANTINE_RETENTION_DAYS (default 14). MinIO applies
     # expiry on a schedule, so objects go within about a day of the limit.
     image: quay.io/minio/mc:latest
     mem_limit: 128m
     depends_on:
-      minio:
+      minio-geo:
         condition: service_healthy
     entrypoint: ["/bin/sh", "-ec"]
     command:
       - |
-        mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"
+        mc alias set local http://minio-geo:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"
         mc mb --ignore-existing local/gates-geo
         mc mb --ignore-existing local/gates-geo-quarantine
+        # Default encryption: every object written to these buckets is encrypted
+        # with a data key that KES gets from OpenBao. The default key is normally
+        # created by MinIO at start. Creating it here too is harmless if it exists.
+        mc admin kms key create local geo-default > /dev/null 2>&1 || true
+        mc encrypt set sse-kms geo-default local/gates-geo
+        mc encrypt set sse-kms geo-default local/gates-geo-quarantine
         # Remove and re-add, so running this again never stacks duplicate rules.
         mc ilm rule rm --all --force local/gates-geo-quarantine > /dev/null 2>&1 || true
         mc ilm rule add --expire-days "$${GEO_QUARANTINE_RETENTION_DAYS}" local/gates-geo-quarantine
@@ -161,6 +168,97 @@ services:
       GEO_QUARANTINE_RETENTION_DAYS: ${GEO_QUARANTINE_RETENTION_DAYS:-14}
       GEO_ARCHIVE_RETENTION_DAYS: ${GEO_ARCHIVE_RETENTION_DAYS:-90}
     restart: "no"
+
+  # --- Encrypted object storage for the geo files -------------------------
+  # A dedicated MinIO (minio-geo) holds gates-geo and gates-geo-quarantine, with
+  # default SSE-KMS encryption. The master keys live in OpenBao; KES sits between:
+  #
+  #   Airflow --S3--> minio-geo --mutual TLS--> kes --AppRole--> OpenBao (kv/kes/...)
+  #
+  # It is separate from the existing `minio` on purpose. A MinIO configured with KES
+  # will not start while KES or OpenBao is unreachable, and OpenBao is sealed after
+  # every reboot. Keeping it apart means the medallion pipelines (Trino, dbt) never
+  # depend on OpenBao. Order: kes-certs, kes-bootstrap (needs OpenBao unsealed), kes,
+  # minio-geo.
+
+  kes-certs:
+    # One-shot. Certificates for mutual TLS between MinIO and KES.
+    image: alpine/openssl:latest
+    mem_limit: 64m
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - tr -d '\r' < /bootstrap/gen-certs.sh > /tmp/gen-certs.sh && sh /tmp/gen-certs.sh
+    volumes:
+      - ./deployment/kes:/bootstrap:ro
+      - ${GATES_DATA_ROOT:-.local-data}/kes-certs:/certs
+    restart: "no"
+
+  kes-bootstrap:
+    # One-shot, idempotent. OpenBao policy and AppRole for KES, and KES's config.
+    # Uses the OpenBao image for the bao CLI. 256m, like openbao-init, because the
+    # CLI is killed for memory at 64m.
+    image: quay.io/openbao/openbao:2.1.0
+    mem_limit: 256m
+    depends_on:
+      kes-certs:
+        condition: service_completed_successfully
+      openbao:
+        condition: service_started
+    environment:
+      BAO_ADDR: http://openbao:8200
+    volumes:
+      - ./deployment/kes:/bootstrap:ro
+      - ${GATES_DATA_ROOT:-.local-data}/openbao-init:/init:ro
+      - ${GATES_DATA_ROOT:-.local-data}/kes-certs:/certs:ro
+      - ${GATES_DATA_ROOT:-.local-data}/kes:/kes
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - tr -d '\r' < /bootstrap/bootstrap.sh > /tmp/kes-bootstrap.sh && sh /tmp/kes-bootstrap.sh
+    restart: "no"
+
+  kes:
+    # TODO verify on first run: this image tag and the `server --config` command
+    # were not checked against the current release.
+    image: quay.io/minio/kes:latest
+    mem_limit: 128m
+    user: "0"
+    command: ["server", "--config=/kes/config.yml"]
+    depends_on:
+      kes-bootstrap:
+        condition: service_completed_successfully
+    volumes:
+      - ${GATES_DATA_ROOT:-.local-data}/kes-certs:/certs:ro
+      - ${GATES_DATA_ROOT:-.local-data}/kes:/kes:ro
+    restart: unless-stopped
+
+  minio-geo:
+    # Same release as the existing minio, with its own data folder and no published
+    # ports. Reached only on the compose network, by the geo tasks.
+    image: quay.io/minio/minio:RELEASE.2024-06-13T22-53-53Z
+    mem_limit: 512m
+    command: server /data --console-address ":9001"
+    depends_on:
+      kes:
+        condition: service_started
+    # KES may still be starting, or OpenBao still sealed after a reboot. MinIO exits
+    # when it cannot reach its key service, so let it retry until KES answers.
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env}
+      MINIO_KMS_KES_ENDPOINT: https://kes:7373
+      MINIO_KMS_KES_CERT_FILE: /certs/minio.crt
+      MINIO_KMS_KES_KEY_FILE: /certs/minio.key
+      MINIO_KMS_KES_CAPATH: /certs/kes.crt
+      MINIO_KMS_KES_KEY_NAME: geo-default
+    volumes:
+      - ${GATES_DATA_ROOT:-.local-data}/minio-geo:/data
+      - ${GATES_DATA_ROOT:-.local-data}/kes-certs:/certs:ro
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
 
   # --- Airflow with the geo environment ----------------------------------
   # Swaps in an image built on top of gates-demo-airflow:local. The existing

@@ -46,6 +46,7 @@ The DAG is `<layer>_geo_pipeline`, for example `critical_facilities_geo_pipeline
 | Services | `docker-compose.geo.yml`, `deployment/openbao/`, `deployment/airflow-geo/` |
 | One-time setup | `scripts/geo_setup.py` |
 | Rebuild PostGIS from the archive | `scripts/geo_reload.py` |
+| Encrypted object storage | The `minio-geo` and `kes` services, `deployment/kes/` (certificates, OpenBao policy, KES config), `scripts/sse_check.py` |
 | Sample data | `sample_data/geo/make_sample.py` |
 
 ## Where data lives and who can read it
@@ -54,8 +55,8 @@ The DAG is `<layer>_geo_pipeline`, for example `critical_facilities_geo_pipeline
 |---|---|---|
 | Source folder | The dropped file, with readable PII | Whoever manages the drop |
 | `/tmp/geo-work` in the Airflow container | Working copies. Readable PII only until `protect_pii` finishes | The DAG tasks. Deleted at the end of the run and on failure |
-| MinIO `gates-geo-quarantine` | Original files of rejected batches, with readable PII | Restricted. Objects expire after `GEO_QUARANTINE_RETENTION_DAYS` days (default 14) |
-| MinIO `gates-geo` | The archive, one folder per batch: `part.parquet` (serving copy only) and `vault.parquet` (ciphertext only). PostGIS is loaded from it | The loader. Objects expire after `GEO_ARCHIVE_RETENTION_DAYS` days (default 90) |
+| `minio-geo`, bucket `gates-geo-quarantine` | Original files of rejected batches, with readable PII, encrypted at rest (SSE-KMS) | Restricted. Objects expire after `GEO_QUARANTINE_RETENTION_DAYS` days (default 14) |
+| `minio-geo`, bucket `gates-geo` | The archive, one folder per batch: `part.parquet` (serving copy only) and `vault.parquet` (ciphertext only). PostGIS is loaded from it. Encrypted at rest (SSE-KMS) | The loader. Objects expire after `GEO_ARCHIVE_RETENTION_DAYS` days (default 90) |
 | PostGIS `geo.<layer>` | Serving copy: pseudonyms, masked values | `geo_loader` |
 | PostGIS `geo_serving.<layer>` | View with only `geoserver.expose_columns` | `geoserver_ro` |
 | PostGIS `pii_vault.contact_pii` | Originals, encrypted | `vault_reader` reads the ciphertext. Only the OpenBao `pii-reader` role can decrypt it |
@@ -125,6 +126,7 @@ First time:
 GEO="docker compose -f docker-compose.demo.yml -f docker-compose.geo.yml"
 $GEO up -d openbao-perms openbao openbao-init      # the last line of the openbao-init log should say "OpenBao ready"
 $GEO build airflow-init                            # several minutes: geo packages and the spaCy model
+$GEO up -d kes-certs kes-bootstrap kes minio-geo   # the encrypted geo MinIO. Needs OpenBao unsealed
 $GEO up -d postgis geoserver geo-init airflow
 ```
 
@@ -136,7 +138,8 @@ export GEOSERVER_ADMIN_PASSWORD=$(grep '^GEOSERVER_ADMIN_PASSWORD=' .env | cut -
 export MINIO_ROOT_PASSWORD=$(grep '^MINIO_ROOT_PASSWORD=' .env | cut -d= -f2-)
 export MINIO_ROOT_USER=$(grep '^MINIO_ROOT_USER=' .env | cut -d= -f2-); MINIO_ROOT_USER=${MINIO_ROOT_USER:-minioadmin}
 export OPENBAO_ROOT_TOKEN=$(sudo awk -F= '/^ROOT_TOKEN=/{print $2}' /opt/gates-demo/data/openbao-init/keys.env)
-$GEO exec -T -e PYTHONPATH=/opt/airflow/dags -e OPENBAO_ROOT_TOKEN -e GEO_DB_PASSWORD -e GEOSERVER_ADMIN_PASSWORD -e MINIO_ROOT_PASSWORD -e MINIO_ROOT_USER airflow /opt/airflow/geo-venv/bin/python - < scripts/geo_setup.py
+export MINIO_ENDPOINT=http://minio-geo:9000        # the geo tasks use the encrypted MinIO
+$GEO exec -T -e PYTHONPATH=/opt/airflow/dags -e OPENBAO_ROOT_TOKEN -e GEO_DB_PASSWORD -e GEOSERVER_ADMIN_PASSWORD -e MINIO_ROOT_PASSWORD -e MINIO_ROOT_USER -e MINIO_ENDPOINT airflow /opt/airflow/geo-venv/bin/python - < scripts/geo_setup.py
 unset OPENBAO_ROOT_TOKEN GEO_DB_PASSWORD GEOSERVER_ADMIN_PASSWORD MINIO_ROOT_PASSWORD
 ```
 
@@ -174,6 +177,40 @@ systemctl status gates-geo.service
 ```
 
 The unit assumes the demo unit is `gates-demo.service` and the repository is in `/opt/gates-demo/app`. A new instance built from `terraform/user_data.sh.tftpl` needs this install step once. To run the same steps by hand, use `bash deployment/start-geo.sh`.
+
+## Encryption at rest for the geo files
+
+The geo files in MinIO (the archive and the quarantine) are encrypted with keys held in OpenBao:
+
+```
+Airflow --S3--> minio-geo --mutual TLS--> kes --AppRole--> OpenBao (kv/kes/...)
+```
+
+- `minio-geo` is a dedicated MinIO for the two geo buckets. Both have default SSE-KMS encryption, so the pipeline code is unchanged: MinIO encrypts on write and decrypts on read.
+- KES hands MinIO a fresh data key for each object. The master key `geo-default` is a secret in OpenBao under `kv/kes/`. If it is removed, the objects become unreadable, even from a copy of the disk.
+- MinIO and KES authenticate each other with certificates (`deployment/kes/gen-certs.sh`). KES lets MinIO create keys, get data keys and decrypt them, and nothing else.
+- It is separate from the existing `minio` on purpose. A MinIO configured with KES will not start while KES or OpenBao is unreachable, and OpenBao is sealed after every reboot. Keeping it apart means Trino and dbt never depend on OpenBao. The existing `minio` and the medallion pipelines are not encrypted at object level.
+- After a reboot, `minio-geo` restarts until KES can reach an unsealed OpenBao. `deployment/start-geo.sh` starts things in the right order.
+
+Check it:
+
+```bash
+$GEO exec -T -e PYTHONPATH=/opt/airflow/dags airflow /opt/airflow/geo-venv/bin/python - < scripts/sse_check.py
+```
+
+See it on disk. The Parquet header `PAR1` must not appear in the raw `minio-geo` files, while it does appear in the unencrypted original MinIO:
+
+```bash
+sudo grep -rl PAR1 /opt/gates-demo/data/minio-geo/gates-geo/ | head -3     # prints nothing
+sudo grep -rl PAR1 /opt/gates-demo/data/minio/gates-geo/ | head -3         # prints old, unencrypted files
+```
+
+Notes:
+
+- Objects written before encryption stay as they are. Default encryption applies to new writes. The old geo buckets on the original `minio` can be deleted once the geo tasks use `minio-geo`.
+- Master keys are plain KV secrets in OpenBao. Back up OpenBao's storage and its unseal material, in different places. Losing both makes every encrypted object permanently unreadable.
+- To change a key, create a new one, point the bucket default at it, and rewrite the existing objects.
+- The KES certificates are self-signed and valid for 10 years. Production uses the organization's CA, with rotation.
 
 ## Rebuilding from the archive
 
@@ -216,4 +253,6 @@ All of them run inside the Airflow container with `-e PYTHONPATH=/opt/airflow/da
 | A compose command stops with a message about `GEO_DB_PASSWORD` | Compose reads the whole override file. Both passwords must be in `.env` |
 | Geo tasks fail after a restart or reboot | OpenBao is sealed, or Airflow is running the original image. Run `bash deployment/start-geo.sh`, and install `gates-geo.service` so it happens automatically. See "After a restart or a reboot" |
 | The newest run read the wrong file | The pipeline takes the newest file in the source folder. Remove leftover test files |
+| `minio-geo` keeps restarting | It cannot reach KES, or KES cannot reach an unsealed OpenBao. Check `$GEO logs kes minio-geo`, then run `bash deployment/start-geo.sh` |
+| `geo-init` fails at `mc encrypt set` | `minio-geo` has no working key service. Check that `kes` is running and that `kes-bootstrap` finished, with `$GEO ps -a` |
 | A file named `.env*` cannot be created | The workspace's permission rules block those names. Use `geo.env.example` |

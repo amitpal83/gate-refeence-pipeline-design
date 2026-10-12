@@ -14,7 +14,9 @@ Items marked **verify** are assumptions that have not been tested against your v
 | Root token | In `keys.env`, used once by `scripts/geo_setup.py` | Revoke it after setup. Use named admin policies |
 | In transit | Plain HTTP between services | TLS on OpenBao, PostGIS, GeoServer and the object store, with mTLS between services. Ceph messenger v2 in `secure` mode inside the cluster |
 | Object store | MinIO | Ceph RGW (S3 API) |
-| Object encryption | None on the MinIO data beyond the encrypted disk | RGW server-side encryption with keys from OpenBao. **verify** |
+| Object encryption | The geo buckets use SSE-KMS on a dedicated `minio-geo`, with master keys in OpenBao (`kv/kes`) through KES. The original medallion MinIO is not encrypted at object level | RGW server-side encryption with keys from OpenBao. **verify** |
+| KES to OpenBao | AppRole secret in a root-only config file on the host | An OpenBao agent or short-lived credentials, over TLS |
+| KES and MinIO certificates | Self-signed, valid 10 years | Certificates from the organization's CA, with rotation |
 | Disk encryption | Encrypted EBS volumes (AWS-managed key) | Ceph OSD encryption (dmcrypt/LUKS) |
 | Storage credentials | MinIO root user, stored in `kv/geo/minio` | A scoped user per service, with a policy limited to its buckets |
 | Vault location | `pii_vault` schema in the same PostGIS database | A separate database or host, with its own network rule |
@@ -34,7 +36,7 @@ RGW documents encryption with HashiCorp Vault. OpenBao is a fork with a compatib
 3. Revoke or disable the key. The object must become unreadable through RGW too.
 4. Check multipart uploads and the Trino and GeoPandas access paths against RGW, since SSE behaviour can differ slightly from MinIO.
 
-The same test applies to MinIO with KES in the PoC. That path is not set up yet. If KES does not accept OpenBao in your versions, fall back to MinIO SSE-S3 for the PoC and record the gap.
+The PoC runs the same idea on MinIO, through KES with OpenBao (see `GEO_PIPELINE.md`, "Encryption at rest for the geo files"). What works there is useful evidence, but it does not prove RGW, which talks to OpenBao directly and has its own authentication options.
 
 Token handling matters: RGW needs a long-lived credential to call OpenBao. Use an OpenBao agent to renew it. A leaked token can decrypt data keys.
 
@@ -43,6 +45,7 @@ Token handling matters: RGW needs a long-lived credential to call OpenBao. Use a
 | Key | Use | Rotation |
 |---|---|---|
 | `pii-hmac` | Pseudonyms. Deterministic, so the same person has the same token everywhere | Rotating changes every new pseudonym, so old and new tokens will not match. Decide first whether to re-key history. The key version is inside each token (`vault:v1:...`) |
+| `geo-default` (a KES master key) | MinIO object encryption for the geo buckets. Stored as a KV secret under `kv/kes/` | KES keys do not rotate in place. Create a new key, point the bucket default at it, and rewrite existing objects. Losing OpenBao's storage makes every encrypted object unreadable |
 | `pii-enc` | Vault encryption | Rotate on a schedule with `transit/keys/pii-enc/rotate`. Move old rows to the new version without exposing plaintext using `rewrap`. Raise `min_decryption_version` once nothing uses the old versions |
 
 Back up OpenBao's storage and its unseal material separately, and in different places. If both are lost, every vault value is lost permanently.
