@@ -7,6 +7,9 @@ Per-DAG task chain:
     start_job -> ingest_shapefile -> validate_geometry -> protect_pii
       -> standardize -> write_geoparquet -> load_postgis -> publish_geoserver
       -> register_metadata -> finish_job
+    write_geoparquet archives the protected layer and the vault ciphertext in
+    MinIO. load_postgis reads them back from there (GeoPandas to PostGIS), so the
+    archive is the single source for the load and can rebuild PostGIS later.
     cleanup_work runs after publish_geoserver whatever happened upstream.
 
 The heavy tasks run in the geo Python environment (GEO_PYTHON, built in
@@ -180,37 +183,45 @@ def _task_standardize(layer, run_id, repo_root, work_root):
 
 
 def _task_write_geoparquet(layer, run_id, repo_root, work_root):
+    """Archive the protected layer and the vault's ciphertext in MinIO. This
+    archive, not the working files, is what load_postgis reads."""
     import sys
 
     sys.path.insert(0, repo_root)
     import geopandas as gpd
-    from common.geo_standardize import safe_batch_id, write_geoparquet
+    import pandas as pd
+    from common.geo_standardize import safe_batch_id, write_geoparquet, write_vault_archive
     from common.openbao_client import OpenBaoClient
     from ingestion.ingest_shapefile import work_dir_for
 
     work_dir = work_dir_for(work_root, layer, safe_batch_id(run_id))
     minio = OpenBaoClient.from_env().read_secret("geo/minio")
-    return {"geoparquet": write_geoparquet(gpd.read_parquet(work_dir / "standardized.parquet"), layer, run_id, minio)}
+    return {
+        "geoparquet": write_geoparquet(gpd.read_parquet(work_dir / "standardized.parquet"), layer, run_id, minio),
+        "vault_archive": write_vault_archive(pd.read_parquet(work_dir / "vault.parquet"), layer, run_id, minio),
+    }
 
 
-def _task_load_postgis(layer, run_id, repo_root, work_root):
+def _task_load_postgis(layer, run_id, repo_root):
+    """GeoParquet to PostGIS: read the archived layer and vault from MinIO with
+    GeoPandas, then load them in one transaction (to_postgis, then SQL)."""
     import sys
     from pathlib import Path
 
     sys.path.insert(0, repo_root)
-    import geopandas as gpd
-    import pandas as pd
     from common.geo_config import load_layer_config
-    from common.geo_standardize import safe_batch_id
+    from common.geo_standardize import geoparquet_key, read_geoparquet, read_vault_archive
     from common.openbao_client import OpenBaoClient
     from common.postgis_loader import connect, load_layer
-    from ingestion.ingest_shapefile import work_dir_for
 
     config = load_layer_config(layer, Path(repo_root) / "config")
-    work_dir = work_dir_for(work_root, layer, safe_batch_id(run_id))
-    gdf = gpd.read_parquet(work_dir / "standardized.parquet")
-    vault = pd.read_parquet(work_dir / "vault.parquet")
-    return load_layer(connect(OpenBaoClient.from_env()), gdf, config, vault, run_id)
+    client = OpenBaoClient.from_env()
+    minio = client.read_secret("geo/minio")
+    gdf = read_geoparquet(layer, run_id, minio)
+    vault = read_vault_archive(layer, run_id, minio)
+    result = load_layer(connect(client), gdf, config, vault, run_id)
+    result["loaded_from"] = f"s3://{minio['bucket']}/{geoparquet_key(layer, run_id)}"
+    return result
 
 
 def _task_publish(layer, run_id, repo_root, expected_rows):
@@ -321,7 +332,7 @@ def build_geo_dag(layer: str, agency: str, source_folder: str, file_pattern: str
         protect = geo_task("protect_pii", _task_protect, retries=2, work_root=WORK_ROOT)
         standardize = geo_task("standardize", _task_standardize, work_root=WORK_ROOT)
         write_geoparquet = geo_task("write_geoparquet", _task_write_geoparquet, retries=2, work_root=WORK_ROOT)
-        load_postgis = geo_task("load_postgis", _task_load_postgis, retries=2, work_root=WORK_ROOT)
+        load_postgis = geo_task("load_postgis", _task_load_postgis, retries=2)
         publish = geo_task("publish_geoserver", _task_publish, retries=2,
                            expected_rows="{{ ti.xcom_pull(task_ids='load_postgis')['rows'] }}")
 

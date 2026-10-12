@@ -85,6 +85,7 @@ def main() -> int:
 
         objects = s3.list_objects_v2(Bucket=minio["bucket"], Prefix=f"{LAYER}/").get("Contents", [])
         check("a GeoParquet object exists", any(o["Key"].endswith("part.parquet") for o in objects), str([o["Key"] for o in objects]))
+        check("a vault archive exists next to it", any(o["Key"].endswith("vault.parquet") for o in objects), str([o["Key"] for o in objects]))
 
         geoserver = client.read_secret("geo/geoserver")
         served = verify_ows(geoserver["url"], config["geoserver"]["workspace"], LAYER, config["bbox_ph"],

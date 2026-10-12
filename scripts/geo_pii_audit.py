@@ -24,7 +24,6 @@ import os
 import sys
 from pathlib import Path
 
-import geopandas as gpd
 import pandas as pd
 from sqlalchemy import text
 
@@ -94,8 +93,10 @@ def scan_geoparquet(s3, bucket: str, analyzer, skip: set[str]) -> list[tuple[str
         if not item["Key"].endswith(".parquet"):
             continue
         body = s3.get_object(Bucket=bucket, Key=item["Key"])["Body"].read()
-        frame = gpd.read_parquet(io.BytesIO(body)).drop(columns="geometry", errors="ignore")
-        known, hits = audit_frame(frame, analyzer, skip)
+        # Plain pandas reads both kinds of object: the spatial layer and the vault
+        # archive, which has no geometry. The vault archive holds ciphertext only.
+        frame = pd.read_parquet(io.BytesIO(body)).drop(columns=["geometry"], errors="ignore")
+        known, hits = audit_frame(frame, analyzer, skip | {"ciphertext"})
         results.append((item["Key"], known, hits))
     return results
 
@@ -128,6 +129,7 @@ def main() -> int:
 
     parquet = scan_geoparquet(s3, minio["bucket"], analyzer, skip)
     check("GeoParquet objects exist", bool(parquet))
+    check("at least one batch has its vault archive", any(key.endswith("vault.parquet") for key, _, _ in parquet))
     for key, known, hits in parquet:
         check(f"no readable PII in {key}", not known and not hits, f"known values: {len(known)}, findings: {hits}")
 

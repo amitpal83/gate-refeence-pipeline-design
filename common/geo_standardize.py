@@ -16,6 +16,7 @@ import re
 from datetime import datetime, timezone
 
 import geopandas as gpd
+import pandas as pd
 from pyproj import CRS
 
 _UNSAFE_KEY_CHARS = re.compile(r"[^A-Za-z0-9._=-]")
@@ -74,3 +75,42 @@ def read_geoparquet(layer: str, batch_id: str, minio: dict) -> gpd.GeoDataFrame:
 
 def delete_geoparquet(layer: str, batch_id: str, minio: dict) -> None:
     _s3(minio).delete_object(Bucket=minio["bucket"], Key=geoparquet_key(layer, batch_id))
+
+
+# --- vault archive ---------------------------------------------------------
+# The vault lives in PostGIS, so the GeoParquet alone could not rebuild it. Each
+# batch also archives the vault's ciphertext next to the serving copy, which makes
+# the archive a complete copy of what PostGIS holds. Ciphertext is safe to store:
+# only OpenBao can decrypt it.
+
+def vault_archive_key(layer: str, batch_id: str) -> str:
+    return f"{layer}/batch={safe_batch_id(batch_id)}/vault.parquet"
+
+
+def write_vault_archive(vault: pd.DataFrame, layer: str, batch_id: str, minio: dict) -> str:
+    """Write the vault rows (record_id, column_name, ciphertext, key_version) and
+    return their s3:// URI."""
+    buffer = io.BytesIO()
+    vault.to_parquet(buffer, index=False)
+    key = vault_archive_key(layer, batch_id)
+    _s3(minio).put_object(Bucket=minio["bucket"], Key=key, Body=buffer.getvalue())
+    return f"s3://{minio['bucket']}/{key}"
+
+
+def read_vault_archive(layer: str, batch_id: str, minio: dict) -> pd.DataFrame:
+    body = _s3(minio).get_object(Bucket=minio["bucket"], Key=vault_archive_key(layer, batch_id))["Body"].read()
+    return pd.read_parquet(io.BytesIO(body))
+
+
+def latest_batch(layer: str, minio: dict) -> str | None:
+    """The newest archived batch that has both its layer and its vault archive,
+    as the batch directory name. None if there is none. Batches written before
+    the vault archive existed are skipped, because they cannot rebuild the vault."""
+    client = _s3(minio)
+    found: dict[str, dict[str, object]] = {}
+    for page in client.get_paginator("list_objects_v2").paginate(Bucket=minio["bucket"], Prefix=f"{layer}/batch="):
+        for item in page.get("Contents", []):
+            batch = item["Key"].split("/")[1].removeprefix("batch=")
+            found.setdefault(batch, {})[item["Key"].rsplit("/", 1)[1]] = item["LastModified"]
+    complete = {b: files["part.parquet"] for b, files in found.items() if {"part.parquet", "vault.parquet"} <= set(files)}
+    return max(complete, key=complete.get) if complete else None

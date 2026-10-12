@@ -14,8 +14,10 @@ shapefile / .zip / .gpkg dropped in the layer's source folder
   -> validate_geometry    geometry and attribute rules. A hard failure quarantines the batch and stops the run
   -> protect_pii          Presidio finds PII, OpenBao encrypts the originals into the vault, the serving copy is masked
   -> standardize          technical columns (_batch_id, _ingested_at)
-  -> write_geoparquet     MinIO bucket gates-geo, with bounding-box metadata
-  -> load_postgis         serving table, vault rows and serving view, replaced in one transaction
+  -> write_geoparquet     archive in MinIO bucket gates-geo: the protected layer (GeoParquet, with
+                          bounding-box metadata) and the vault's ciphertext
+  -> load_postgis         reads that archive back with GeoPandas and loads PostGIS: serving table,
+                          vault rows and serving view, replaced in one transaction
   -> publish_geoserver    workspace, datastore, layer, style. Anonymous reads closed
   -> register_metadata    DataHub, with a PII tag on each protected column
   -> finish_job           job_execution row
@@ -43,6 +45,7 @@ The DAG is `<layer>_geo_pipeline`, for example `critical_facilities_geo_pipeline
 | DataHub | `metadata/datahub_emit_geo.py` |
 | Services | `docker-compose.geo.yml`, `deployment/openbao/`, `deployment/airflow-geo/` |
 | One-time setup | `scripts/geo_setup.py` |
+| Rebuild PostGIS from the archive | `scripts/geo_reload.py` |
 | Sample data | `sample_data/geo/make_sample.py` |
 
 ## Where data lives and who can read it
@@ -52,7 +55,7 @@ The DAG is `<layer>_geo_pipeline`, for example `critical_facilities_geo_pipeline
 | Source folder | The dropped file, with readable PII | Whoever manages the drop |
 | `/tmp/geo-work` in the Airflow container | Working copies. Readable PII only until `protect_pii` finishes | The DAG tasks. Deleted at the end of the run and on failure |
 | MinIO `gates-geo-quarantine` | Original files of rejected batches, with readable PII | Restricted. Objects expire after `GEO_QUARANTINE_RETENTION_DAYS` days (default 14) |
-| MinIO `gates-geo` | GeoParquet, serving copy only | The loader |
+| MinIO `gates-geo` | The archive, one folder per batch: `part.parquet` (serving copy only) and `vault.parquet` (ciphertext only). PostGIS is loaded from it | The loader. Objects expire after `GEO_ARCHIVE_RETENTION_DAYS` days (default 90) |
 | PostGIS `geo.<layer>` | Serving copy: pseudonyms, masked values | `geo_loader` |
 | PostGIS `geo_serving.<layer>` | View with only `geoserver.expose_columns` | `geoserver_ro` |
 | PostGIS `pii_vault.contact_pii` | Originals, encrypted | `vault_reader` reads the ciphertext. Only the OpenBao `pii-reader` role can decrypt it |
@@ -171,6 +174,22 @@ systemctl status gates-geo.service
 ```
 
 The unit assumes the demo unit is `gates-demo.service` and the repository is in `/opt/gates-demo/app`. A new instance built from `terraform/user_data.sh.tftpl` needs this install step once. To run the same steps by hand, use `bash deployment/start-geo.sh`.
+
+## Rebuilding from the archive
+
+Every run archives two files in MinIO, `gates-geo/<layer>/batch=<run id>/part.parquet` (the protected layer) and `vault.parquet` (the vault's ciphertext), and loads PostGIS from them with GeoPandas (`read_parquet`, then `to_postgis`, then one SQL transaction). The archive is therefore a complete copy of what PostGIS holds, and a lost or damaged PostGIS can be rebuilt without the original upload:
+
+```bash
+$GEO exec -T -e PYTHONPATH=/opt/airflow/dags airflow /opt/airflow/geo-venv/bin/python - < scripts/geo_reload.py
+```
+
+This uses the newest complete batch. To pick one, add `-e BATCH=<directory name under batch=>`. Notes:
+
+- On a new database, run `scripts/geo_setup.py` first, so the roles, schemas and credentials exist.
+- The rebuild restores the serving table, the serving view and the vault rows. GeoServer keeps its own layer settings. Run the DAG again if GeoServer was lost too.
+- Batches expire after `GEO_ARCHIVE_RETENTION_DAYS` days (default 90). PostGIS itself holds only the latest version, so the archive is the only history.
+- Batches written before the vault archive existed have no `vault.parquet` and cannot be reloaded.
+- The vault ciphertext is only useful while OpenBao keeps its keys. Back up OpenBao's storage and unseal material separately, as described in `PRODUCTION_SECURITY.md`.
 
 ## Tests
 

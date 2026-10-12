@@ -151,10 +151,15 @@ services:
         # Remove and re-add, so running this again never stacks duplicate rules.
         mc ilm rule rm --all --force local/gates-geo-quarantine > /dev/null 2>&1 || true
         mc ilm rule add --expire-days "$${GEO_QUARANTINE_RETENTION_DAYS}" local/gates-geo-quarantine
+        # The archive keeps one copy of the protected layer and vault per batch,
+        # while PostGIS keeps only the latest. Expire old batches.
+        mc ilm rule rm --all --force local/gates-geo > /dev/null 2>&1 || true
+        mc ilm rule add --expire-days "$${GEO_ARCHIVE_RETENTION_DAYS}" local/gates-geo
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env}
       GEO_QUARANTINE_RETENTION_DAYS: ${GEO_QUARANTINE_RETENTION_DAYS:-14}
+      GEO_ARCHIVE_RETENTION_DAYS: ${GEO_ARCHIVE_RETENTION_DAYS:-90}
     restart: "no"
 
   # --- Airflow with the geo environment ----------------------------------
